@@ -7,3 +7,4 @@ numpy
 pillow
 scikit-learn
 matplotlib
+git+https://github.com/jacobgil/pytorch-grad-cam.git

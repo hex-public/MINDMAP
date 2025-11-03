@@ -2,8 +2,13 @@ import io
 import json
 import time
 import random
+import matplotlib.pyplot as plt
+from scripts.cam_cls import gradcam_overlay_for_cls
+from classifier import get_torch_model
+
 from datetime import datetime
 from typing import Dict, Any
+
 
 import streamlit as st
 from PIL import Image, ImageOps
@@ -219,27 +224,149 @@ def page_analysis():
     })
     st.session_state.page = "result"
     st.rerun()
+    
+# --------------------- HTML 리포트 생성 함수 ---------------------
+def build_report_html(info: dict, res: dict) -> str:
+    # 색상 결정
+    risk = res.get("risk")
+    color = "#b91c1c" if risk in ("High", "Medium") else "#166534"
+    ai_text = f"<b style='color:{color}'>{res.get('label','-')}</b> · {int(res.get('prob_alzheimer',0)*100)}%"
+
+    diseases = info.get("기저질환", [])
+    diseases_str = ", ".join(diseases) if diseases else "없음"
+
+    return f"""
+    <style>
+      .report-box {{
+        border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;
+        background: #ffffff; color:#111;   /* ← 글자색 진하게 */
+      }}
+      .report-title {{ margin: 0 0 8px 0; color:#111; }}
+      .report-table {{
+        width: 100%; border-collapse: collapse; font-size: 15px; color:#111;
+      }}
+      .report-table th, .report-table td {{
+        border: 1px solid #eee; padding: 10px; text-align: left; color:#111;
+      }}
+      .report-table th {{ width: 28%; background: #f9fafb; }}
+      .report-note {{ margin-top:8px; color:#6b7280; font-size:12px; }}
+    </style>
+    <div class="report-box">
+      <h4 class="report-title">AI 예측 결과 보고서</h4>
+      <table class="report-table">
+        <tr><th>환자 이름</th><td>{info.get('이름','-')}</td></tr>
+        <tr><th>나이 / 성별</th><td>{info.get('나이','-')}세 / {info.get('성별','-')}</td></tr>
+        <tr><th>기저질환</th><td>{diseases_str}</td></tr>
+        <tr><th>AI 분석 결과</th><td>{ai_text}</td></tr>
+      </table>
+      <p class="report-note">
+    </div>
+    """
 
 # ===================== 페이지: 결과 =====================
 def page_result():
     app_header()
     st.success("분석이 완료되었습니다.")
     res = st.session_state.result or {}
+    info = st.session_state.get("patient_info", {})
+    history_has_topk = bool(st.session_state.history and "topk" in st.session_state.history[-1])
+    topk = st.session_state.history[-1]["topk"] if history_has_topk else None
 
-    st.subheader("예측 결과")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.metric("예측 라벨", res.get("label", "-"))
-        st.metric("위험도", res.get("risk", "-"))
-    with c2:
-        st.metric("알츠하이머 확률", f"{int(res.get('prob_alzheimer',0)*100)}%")
+    tab_sum, tab_topk, tab_cam, tab_report = st.tabs(
+        ["요약", "Top-K 분포", "Grad-CAM", "리포트 & 다운로드"]
+    )
 
-    with st.expander("환자 정보 확인"):
-        st.json(st.session_state.patient_info)
+    # ① 요약
+    with tab_sum:
+        st.subheader("예측 요약")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric("예측 라벨", res.get("label", "-"))
+            st.metric("위험도", res.get("risk", "-"))
+        with c2:
+            st.metric("알츠하이머 확률", f"{int(res.get('prob_alzheimer',0)*100)}%")
 
-    with st.expander("해설/주의"):
-        for line in res.get("explanations", []):
-            st.write("- " + line)
+        with st.expander("환자 정보"):
+            st.json(info)
+
+        with st.expander("해설/주의"):
+            for line in res.get("explanations", []):
+                st.write("- " + line)
+
+    # ② Top-K
+    with tab_topk:
+        st.subheader("클래스별 신뢰도(Top-K)")
+        if not topk:
+            st.info("Top-K 결과가 없습니다.")
+        else:
+            labels = [x["label"] for x in topk]
+            probs  = [float(x["conf"]) * 100 for x in topk]
+
+            fig, ax = plt.subplots(figsize=(6, 3.2))
+            ax.bar(labels, probs)
+            ax.set_ylabel("Confidence (%)")
+            ax.set_ylim(0, 100)
+            for i, v in enumerate(probs):
+                ax.text(i, v + 1, f"{v:.1f}%", ha="center", va="bottom", fontsize=9)
+            st.pyplot(fig, use_container_width=True)
+
+    # ③ Grad-CAM
+    with tab_cam:
+        st.subheader("Grad-CAM 시각화")
+        try:
+            orig_img = st.session_state.get("image")
+            if orig_img is None:
+                st.info("원본 이미지가 없어 Grad-CAM을 표시하지 못했습니다.")
+            else:
+                yolo_wrapper = get_model()
+                torch_model = get_torch_model(yolo_wrapper)
+                target_idx = int(topk[0]["index"]) if topk else None
+
+                overlay_pil, _ = gradcam_overlay_for_cls(
+                    torch_model=torch_model,
+                    pil_image=orig_img,
+                    input_size=224,
+                    target_index=target_idx,
+                )
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.image(orig_img, caption="원본 이미지", use_container_width=True)
+                with c2:
+                    st.image(overlay_pil, caption="Grad-CAM", use_container_width=True)
+
+        except Exception as e:
+            st.warning(f"Grad-CAM 생성 중 문제가 발생했습니다: {e}")
+
+    # ④ 리포트 & 다운로드
+    with tab_report:
+        st.subheader("보고서 미리보기")
+
+        # ✅ 새 코드: report_html 함수로 생성 후 렌더링
+        html = build_report_html(st.session_state.get("patient_info", {}), res)
+        st.markdown(html, unsafe_allow_html=True)
+
+        # HTML 다운로드 버튼 (유지)
+        html_bytes = html.encode("utf-8")
+        st.download_button(
+            "보고서(HTML) 다운로드",
+            data=html_bytes,
+            file_name=f"mindmap_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+            mime="text/html",
+        )
+
+
+    # 하단 네비게이션
+    st.write("")
+    colL, colR = st.columns(2)
+    with colL:
+        st.button("처음으로", on_click=lambda: st.session_state.update(
+            page="info", patient_info={}, image=None, result=None
+        ))
+    with colR:
+        st.button("새 이미지로 다시 분석", on_click=lambda: st.session_state.update(
+            page="upload", image=None, result=None
+        ))
 
     app_footer()
 
