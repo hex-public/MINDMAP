@@ -1,13 +1,16 @@
-# 가상환경 제외
+# 가상환경
 .venv/
 env/
 
-# 모델 가중치와 데이터셋 제외
-*.pt
+# 데이터/모델/실험 결과(큰 파일)
+data/
 datasets/
 runs/
+*.zip
+*.pt
+*.onnx
 
-# 캐시나 임시 파일
+# 캐시/잡파일
 __pycache__/
 .DS_Store
 .ipynb_checkpoints/

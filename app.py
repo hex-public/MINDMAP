@@ -200,7 +200,7 @@ def page_analysis():
         "risk": "High" if top1["conf"] >= 0.66 else ("Medium" if top1["conf"] >= 0.33 else "Low"),
         "explanations": [
             f"Top-1: {top1['label']} ({top1['conf']*100:.1f}%)",
-            "모델: YOLOv8n-cls | 입력 224 | Top-K 분포는 상세에서 확인",
+            "모델: YOLOv8n-cls | 입력 224 | Top-K 분포",
         ],
     }
 
