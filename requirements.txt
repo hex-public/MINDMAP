@@ -7,4 +7,7 @@ numpy
 pillow
 scikit-learn
 matplotlib
+openai
+pandas
+pytorch-grad-cam
 git+https://github.com/jacobgil/pytorch-grad-cam.git
