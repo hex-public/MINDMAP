@@ -46,7 +46,7 @@ def gradcam_overlay_for_cls(
       overlay_pil: CAM이 입혀진 PIL 이미지
       grayscale_cam: [H,W] CAM 배열 (0~1)
     """
-    # ✅ Grad가 켜져 있어야 함
+    # Grad가 켜져 있어야 함
     torch.set_grad_enabled(True)
     torch_model.eval()
 
@@ -62,7 +62,7 @@ def gradcam_overlay_for_cls(
     # 타깃 클래스 지정 (없으면 모델이 자동 선택)
     targets = [ClassifierOutputTarget(int(target_index))] if target_index is not None else None
 
-    # ✅ 최신 버전: use_cuda 인자 없음
+    # 최신 버전: use_cuda 인자 없음
     cam = GradCAM(model=torch_model, target_layers=target_layers)
     grayscale_cam = cam(input_tensor=x, targets=targets, eigen_smooth=True)  # [B,H,W]
     grayscale_cam = grayscale_cam[0]

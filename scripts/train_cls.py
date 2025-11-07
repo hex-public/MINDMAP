@@ -3,7 +3,7 @@ from ultralytics import YOLO
 from pathlib import Path
 import shutil
 
-# ✅ 결과폴더를 명시적으로 runs/classify로 고정
+# 결과폴더를 명시적으로 runs/classify로 고정
 PROJECT = Path("runs/classify")
 RUN_NAME = "alz4_run"
 
@@ -22,7 +22,7 @@ def main():
         verbose=False
     )
 
-    # ✅ 저장 경로 일관화
+    # 저장 경로 일관화
     src = PROJECT / RUN_NAME / "weights" / "best.pt"     # runs/classify/alz4_run/weights/best.pt
     dst = Path("weights") / "best.pt"
     dst.parent.mkdir(parents=True, exist_ok=True)

@@ -112,19 +112,19 @@ def preprocess_image(img: Image.Image) -> Image.Image:
 
 # --------------------- 사이드바 ---------------------
 with st.sidebar:
-    st.markdown("### Access")
-    admin_name = st.text_input("Password", type="password")
+    st.markdown("### 관리자")
+    admin_name = st.text_input("비밀번호", type="password")
     admin_toggle = st.toggle("관리자 모드", value=st.session_state.is_admin)
 
     if admin_toggle:
         if admin_name.strip().lower() == "admin":
             st.session_state.is_admin = True
-            st.success("admin ON")
+            st.success("관리자 모드 ON")
         elif admin_name != "":
             st.error("비밀번호가 틀렸습니다.")
     else:
         st.session_state.is_admin = False
-        st.info("admin OFF")
+        st.info("관리자 모드 OFF")
 
     st.divider()
     
@@ -139,7 +139,7 @@ with st.sidebar:
         st.markdown("### Page")
 
         target = st.selectbox(
-            "Quick Navigation",
+            "빠른 이동",
             ["info", "upload", "analysis", "result", "report", "llm", "admin"],
             format_func=lambda x: {
                 "info": "1. 환자 정보",
@@ -166,7 +166,7 @@ with st.sidebar:
 # ===================== 페이지: 환자 정보 =====================
 def page_info():
     app_header()
-    st.title("환자 인적사항 입력")
+    st.title("인적사항 입력")
 
     with st.form("patient_form", clear_on_submit=False):
         name = st.text_input("이름 *")
@@ -204,14 +204,14 @@ def page_upload():
     if uploaded_file:
         img = Image.open(uploaded_file)
         st.image(img, caption="업로드된 MRI 이미지", use_container_width=True)
-        if st.button("Run AI Analysis"):
+        if st.button("AI 분석하기"):
             st.session_state.image = img
             st.session_state.page = "analysis"
             st.rerun()
     else:
         st.warning("⚠️ MRI 이미지를 업로드해주세요.")
 
-    st.button("Back", on_click=lambda: st.session_state.update(page="info"))
+    st.button("뒤로가기", on_click=lambda: st.session_state.update(page="info"))
     app_footer()
 
 # ===================== 페이지: 분석 중 =====================
@@ -321,7 +321,7 @@ def personalize_drugs(stage: str, comorbidities: list[str]) -> dict:
 
     # 간질환
     if has_liver:
-        _shift(plan, "도ने페질(Donepezil)", new="caution",
+        _shift(plan, "도네페질(Donepezil)", new="caution",
                reason="간이 부담될 수 있어,  용량 처방에 주의가 필요합니다.")
         _shift(plan, "니세르골린(Nicergoline)", new="caution",
                reason="간 수치가 올라갈 수 있어, 정기 확인이 필요할 수 있습니다.")
@@ -430,7 +430,7 @@ def page_result():
         ["요약", "Top-K", "Grad-CAM"]
     )
 
-    # ① 요약
+    # 1. 요약
     with tab_sum:
         st.subheader("예측 요약")
         c1, c2 = st.columns(2)
@@ -447,7 +447,7 @@ def page_result():
             for line in res.get("explanations", []):
                 st.write("- " + line)
 
-    # ② Top-K
+    # 2. Top-K
     with tab_topk:
         st.subheader("클래스별 확률")
         if not topk:
@@ -464,7 +464,7 @@ def page_result():
                 ax.text(i, v + 1, f"{v:.1f}%", ha="center", va="bottom", fontsize=9)
             st.pyplot(fig, use_container_width=True)
 
-    # ③ Grad-CAM
+    # 3. Grad-CAM
     with tab_cam:
         st.subheader("모델이 주목한 부분")
         try:
@@ -494,7 +494,7 @@ def page_result():
 
     # 리포트 페이지 이동
     st.divider()
-    if st.button("Report"):
+    if st.button("보고서로 이동"):
         st.session_state.page = "report"
         st.rerun()
 
@@ -502,11 +502,11 @@ def page_result():
     st.write("")
     colL, colR = st.columns(2)
     with colL:
-        st.button("Home", on_click=lambda: st.session_state.update(
+        st.button("홈으로", on_click=lambda: st.session_state.update(
             page="info", patient_info={}, image=None, result=None
         ))
     with colR:
-        st.button("Reanalyzing", on_click=lambda: st.session_state.update(
+        st.button("다시 분석하기", on_click=lambda: st.session_state.update(
             page="upload", image=None, result=None
         ))
 
@@ -515,14 +515,14 @@ def page_result():
 #=======================리포트======================
 def page_report():
     app_header()
-    st.title("Report")
+    st.title("보고서")
 
-    # 가드: 결과/환자정보 없을 때
+    # 결과/환자정보 없을 때
     res = st.session_state.get("result") or {}
     info = st.session_state.get("patient_info") or {}
     if not res or not info:
         st.warning("표시할 결과가 없습니다.")
-        if st.button("Back"):
+        if st.button("뒤로가기"):
             st.session_state.page = "result"
             st.rerun()
         app_footer()
@@ -540,7 +540,7 @@ def page_report():
     # HTML 다운로드
     html_bytes = html.encode("utf-8")
     st.download_button(
-        "Download(.html)",
+        "다운로드(.html)",
         data=html_bytes,
         file_name=f"mindmap_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
         mime="text/html",
@@ -549,15 +549,15 @@ def page_report():
     st.divider()
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("Back"):
+        if st.button("뒤로가기"):
             st.session_state.page = "result"
             st.rerun()
     with col2:
-        if st.button("Home"):
+        if st.button("홈으로"):
             st.session_state.update(page="info", patient_info={}, image=None, result=None)
             st.rerun()
     with col3:  
-        if st.button("Explain"):
+        if st.button("설명으로 이동"):
             st.session_state.page = "llm"
             st.rerun()
 
@@ -570,7 +570,7 @@ def page_admin():
     st.title("관리자 대시보드")
     if not st.session_state.is_admin:
         st.error("접근 권한이 없습니다.")
-        if st.button("Back"):
+        if st.button("뒤로가기"):
             st.session_state.page = "info"
         return
 
@@ -582,7 +582,7 @@ def page_admin():
             with st.expander(f"#{i} · {item['ts']} · {item['patient'].get('이름','-')}"):
                 st.json(item)
 
-    if st.button("Home"):
+    if st.button("홈으로"):
         st.session_state.page = "info"
         st.rerun()
 
@@ -683,13 +683,13 @@ def generate_llm_explanation(client, info, res, plan, tone="Kind", length="Norma
 # ===================== LLM: ChatGPT 페이지 =====================
 def page_llm():
     app_header()
-    st.header("Description")
+    st.header("LLM 설명")
 
     res = st.session_state.get("result") or {}
     info = st.session_state.get("patient_info") or {}
     if not res or not info:
         st.warning("분석 결과가 없습니다.")
-        if st.button("Result"):
+        if st.button("뒤로가기"):
             st.session_state.page = "result"
             st.rerun()
         app_footer()
@@ -702,13 +702,13 @@ def page_llm():
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        tone = st.selectbox("톤", ["Kind", "Neutral", "Expertise"], index=0)
+        tone = st.selectbox("톤", ["친절하게", "중립적", "전문적"], index=0)
     with col2:
-        length = st.selectbox("길이", ["Short", "Normal", "Detail"], index=1)
+        length = st.selectbox("길이", ["짧게", "보통", "길게"], index=1)
     with col3:
         language = st.selectbox("언어", ["한국어", "English"], index=0)
 
-    if st.button("Run LLM"):
+    if st.button("LLM 설명하기"):
         with st.spinner("설명 생성 중..."):
             client = get_openai_client()
             text = generate_llm_explanation(client, info, res, plan, tone, length, language)
@@ -717,9 +717,9 @@ def page_llm():
     st.write("")
     col_b1, col_b2 = st.columns(2)
     with col_b1:
-        st.button("Back", on_click=lambda: st.session_state.update(page="report"))
+        st.button("뒤로가기", on_click=lambda: st.session_state.update(page="report"))
     with col_b2:
-        st.button("Home", on_click=lambda: st.session_state.update(
+        st.button("홈으로", on_click=lambda: st.session_state.update(
             page="info", patient_info={}, image=None, result=None
         ))
 
