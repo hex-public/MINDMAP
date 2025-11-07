@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 
 import streamlit as st
+import streamlit.components.v1 as components
+
 from PIL import Image, ImageOps
 
 from scripts.cam_cls import gradcam_overlay_for_cls
@@ -359,63 +361,6 @@ def _annotate(plan: dict, drug_name: str, extra: str):
                 plan[bucket][i] = (nm, merged)
                 return
  
-# --------------------- HTML 리포트 생성 함수 ---------------------
-def build_report_html(info: dict, res: dict, plan: dict) -> str:
-    # 색상
-    risk = res.get("risk")
-    color = "#b91c1c" if risk in ("High", "Medium") else "#166534"
-    ai_text = f"<b style='color:{color}'>{res.get('label','-')}</b> · {int(res.get('prob_alzheimer',0)*100)}%"
-
-    diseases = info.get("기저질환", []) or []
-    diseases_str = ", ".join(diseases) if diseases else "없음"
-
-    # 약물 섹션 만들기
-    def _list_to_html(title, items):
-        if not items:
-            return f"<p><b>{title}</b>: 해당 없음</p>"
-        lis = "".join([f"<li><b>{nm}</b> – {note}</li>" for nm, note in items])
-        return f"<p><b>{title}</b></p><ul>{lis}</ul>"
-
-    drugs_html = ""
-    if plan and any(plan[k] for k in ("recommended", "caution", "avoid")):
-        drugs_html = (
-            "<h4 style='margin-top:16px'>권장 약물 & 주의사항</h4>" +
-            _list_to_html("권장하는 약물", plan["recommended"]) +
-            _list_to_html("주의해야 할 약물", plan["caution"]) +
-            _list_to_html("피해야 할 약물", plan["avoid"])
-        )
-    else:
-        drugs_html = "<p>본 정상군에서는 약물 치료 권장이 없습니다.</p>"
-
-    return f"""
-    <style>
-      .report-box {{
-        border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px;
-        background: #ffffff; color:#111;
-      }}
-      .report-title {{ margin: 0 0 8px 0; color:#111; }}
-      .report-table {{
-        width: 100%; border-collapse: collapse; font-size: 15px; color:#111;
-      }}
-      .report-table th, .report-table td {{
-        border: 1px solid #eee; padding: 10px; text-align: left; color:#111;
-      }}
-      .report-table th {{ width: 28%; background: #f9fafb; }}
-      .report-note {{ margin-top:8px; color:#6b7280; font-size:12px; }}
-    </style>
-    <div class="report-box">
-      <h4 class="report-title">AI 예측 결과</h4>
-      <table class="report-table">
-        <tr><th>환자 이름</th><td>{info.get('이름','-')}</td></tr>
-        <tr><th>나이 / 성별</th><td>{info.get('나이','-')}세 / {info.get('성별','-')}</td></tr>
-        <tr><th>기저질환</th><td>{diseases_str}</td></tr>
-        <tr><th>YOLOv8 분석 결과</th><td>{ai_text}</td></tr>
-      </table>
-      {drugs_html}
-      <p class="report-note">
-    </div>
-    """
-
 
 # ===================== 페이지: 결과 =====================
 def page_result():
@@ -512,12 +457,147 @@ def page_result():
 
     app_footer()
 
+# --------------------- HTML 리포트 생성 함수 ---------------------
+def build_report_html(info: dict, res: dict, plan: dict) -> str:
+    risk = res.get("risk")
+    color = "#b91c1c" if risk in ("High", "Medium") else "#166534"
+    ai_text = f"<span style='font-weight:bold; color:{color};'>{res.get('label','-')}</span> · {int(res.get('prob_alzheimer',0)*100)}%"
+
+    diseases = info.get("기저질환", []) or []
+    diseases_str = ", ".join(diseases) if diseases else "없음"
+
+    # --- 약물 섹션: 카드형 + 배지, 비어있으면 섹션 자체 숨김 ---
+    def _cards_html(bucket_title: str, items: list[tuple[str, str]], badge_class: str) -> str:
+        if not items:
+            return ""  # 비어있으면 아예 표시 안 함
+        cards = []
+        for drug, note in items:
+            cards.append(
+                f"""
+                <div class="drug-card">
+                  <div class="drug-badge {badge_class}">{bucket_title}</div>
+                  <div class="drug-name">{drug}</div>
+                  <div class="drug-note">{note}</div>
+                </div>
+                """
+            )
+        return "".join(cards)
+
+    has_any = bool(plan) and any(plan.get(k) for k in ("recommended", "caution", "avoid"))
+    if has_any:
+        rec_cards = _cards_html("권장", plan.get("recommended", []), "rec")
+        cau_cards = _cards_html("주의",  plan.get("caution", []),     "cau")
+        avd_cards = _cards_html("피함",  plan.get("avoid", []),        "avd")
+
+        # 전부 비어있으면 섹션 숨김
+        if not (rec_cards or cau_cards or avd_cards):
+            drugs_html = ""
+        else:
+            # 상단에 간단한 카운트 배지 + 그리드 카드
+            n_rec = len(plan.get("recommended", []))
+            n_cau = len(plan.get("caution", []))
+            n_avd = len(plan.get("avoid", []))
+            drugs_html = f"""
+            <div class="drug-section">
+              <h4 class="drug-title">💊 약물 요약
+                <span class="chip rec">권장 {n_rec}</span>
+                <span class="chip cau">주의 {n_cau}</span>
+                <span class="chip avd">피함 {n_avd}</span>
+              </h4>
+              <div class="drug-grid">
+                {rec_cards}{cau_cards}{avd_cards}
+              </div>
+            </div>
+            """
+    else:
+        drugs_html = ""  # NonDemented 등: 섹션 자체 숨김
+
+    return f"""
+    <style>
+      .report-box {{
+        border: 2px solid #333;
+        padding: 20px;
+        margin-bottom: 20px;
+        border-radius: 8px;
+        background-color: #ffffff;
+      }}
+      .report-header {{
+        text-align: center;
+        border-bottom: 2px solid #ddd;
+        padding-bottom: 10px;
+        margin-bottom: 15px;
+      }}
+      .report-header h3 {{ margin: 0; color: #1E90FF; }}
+      .report-header p {{ font-size: 12px; color: #555; }}
+
+      .report-table {{
+        width: 100%; border-collapse: collapse; margin-top: 10px;
+      }}
+      .report-table th, .report-table td {{
+        border: 1px solid #eee; padding: 10px; text-align: left; font-size: 15px; color: #111;
+      }}
+      .report-table th {{
+        background-color: #f8f8f8; width: 30%; font-weight: bold; color: #333;
+      }}
+      .important-result td {{ background-color: #fffacd; font-size: 16px; }}
+
+      /* --- 약물 섹션 스타일 --- */
+      .drug-section {{ margin-top: 22px; }}
+      .drug-title {{ margin: 0 0 10px 0; display:flex; align-items:center; gap:8px; }}
+      .chip {{
+        display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600;
+        border:1px solid rgba(0,0,0,.08);
+      }}
+      .chip.rec {{ background:#ecfdf5; color:#065f46; border-color:#d1fae5; }}
+      .chip.cau {{ background:#fff7ed; color:#9a3412; border-color:#ffedd5; }}
+      .chip.avd {{ background:#fef2f2; color:#991b1b; border-color:#fee2e2; }}
+
+      .drug-grid {{
+        display:grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr));
+        gap:12px; margin-top:6px;
+      }}
+      .drug-card {{
+        border:1px solid #e5e7eb; border-radius:10px; padding:12px;
+        background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.03);
+      }}
+      .drug-badge {{
+        display:inline-block; font-size:11px; font-weight:700; letter-spacing:.2px;
+        padding:2px 6px; border-radius:6px; margin-bottom:6px;
+      }}
+      .drug-badge.rec {{ background:#ecfdf5; color:#065f46; }}
+      .drug-badge.cau {{ background:#fff7ed; color:#9a3412; }}
+      .drug-badge.avd {{ background:#fef2f2; color:#991b1b; }}
+
+      .drug-name {{ font-weight:700; margin-bottom:4px; }}
+      .drug-note {{ font-size:13px; color:#444; line-height:1.45; }}
+
+      .report-note {{ margin-top: 12px; color: #6b7280; font-size: 12px; }}
+    </style>
+
+    <div class="report-box">
+      <div class="report-header">
+        <h3>MINDMAP</h3>
+        <p>알츠하이머 AI 예측 결과</p>
+      </div>
+
+
+      <table class="report-table">
+        <tr><th>환자 이름</th><td>{info.get('이름','-')}</td></tr>
+        <tr><th>나이 / 성별</th><td>{info.get('나이','-')}세 / {info.get('성별','-')}</td></tr>
+        <tr><th>기저질환</th><td>{diseases_str}</td></tr>
+        <tr class="important-result"><th>YOLOv8 분석 결과</th><td>{ai_text}</td></tr>
+      </table>
+
+      {drugs_html}
+
+      <p class="report-note">※ 본 결과는 AI 분석 결과이며, 최종적인 판단은 전문의 상담이 필요합니다.</p>
+    </div>
+    """
 #=======================리포트======================
 def page_report():
     app_header()
     st.title("보고서")
 
-    # 결과/환자정보 없을 때
     res = st.session_state.get("result") or {}
     info = st.session_state.get("patient_info") or {}
     if not res or not info:
@@ -528,40 +608,46 @@ def page_report():
         app_footer()
         return
 
-    # 개인화 약물 플랜 생성 (result의 stage와 환자 기저질환 기반)
+    # 최신 개인화 플랜 계산(세션에 저장 안 해도 됨)
     stage = res.get("stage", "NonDemented")
     diseases = info.get("기저질환", []) or []
-    drug_plan = personalize_drugs(stage, diseases)
+    plan = personalize_drugs(stage, diseases)
 
-    # HTML 생성 & 렌더링
-    html = build_report_html(info, res, drug_plan)
-    st.markdown(html, unsafe_allow_html=True)
+    # 1) HTML 생성
+    report_html = build_report_html(info, res, plan)
 
-    # HTML 다운로드
-    html_bytes = html.encode("utf-8")
-    st.download_button(
-        "다운로드(.html)",
-        data=html_bytes,
-        file_name=f"mindmap_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
-        mime="text/html",
+    # 2) 컴포넌트로 렌더 (아이프레임)
+    # height는 필요에 따라 조정(아래 팁 참고)
+    components.html(
+        html=report_html,
+        height=900,        # 페이지 길면 1000~1200 정도로
+        scrolling=True,    # 내부 스크롤 허용
     )
 
-    st.divider()
+    # 3) 다운로드 버튼은 그대로 유지 가능
+    st.download_button(
+        label="HTML 보고서 다운로드",
+        data=report_html.encode("utf-8"),
+        file_name=f"{info.get('이름','환자')}_AI_치매_예측_보고서.html",
+        mime="text/html"
+    )
+
+    # 네비게이션
+    st.write("")
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("뒤로가기"):
+        if st.button("결과로 돌아가기"):
             st.session_state.page = "result"
             st.rerun()
     with col2:
         if st.button("홈으로"):
             st.session_state.update(page="info", patient_info={}, image=None, result=None)
             st.rerun()
-    with col3:  
-        if st.button("설명으로 이동"):
+
+    with col3:
+        if st.button("LLM 설명으로 이동"):
             st.session_state.page = "llm"
             st.rerun()
-
-
     app_footer()
 
 # ===================== 페이지: 관리자 대시보드 =====================
@@ -589,8 +675,10 @@ def page_admin():
     app_footer()
 
 # ===================== LLM: ChatGPT 셋업 =====================
-def build_explanation_prompt(info: dict, res: dict, plan: dict, tone: str, length: str, language: str) -> str:
-    # plan dict -> 간단 나열
+def build_explanation_prompt(info: dict, res: dict, plan: dict, tone: str, length: str, language: str):
+    """
+    종합 설명 중심 프롬프트 (약물·기저질환 포함)
+    """
     def flat(bucket):
         items = plan.get(bucket, [])
         return [f"{nm} - {note}" for (nm, note) in items]
@@ -599,7 +687,6 @@ def build_explanation_prompt(info: dict, res: dict, plan: dict, tone: str, lengt
     caution     = flat("caution")
     avoid       = flat("avoid")
 
-    # 입력 요약
     patient = {
         "name": info.get("이름","-"),
         "age": info.get("나이","-"),
@@ -613,52 +700,49 @@ def build_explanation_prompt(info: dict, res: dict, plan: dict, tone: str, lengt
     }
 
     tone_map = {
-        "Kind": "warm, supportive, non-technical, plain language",
-        "Neutral": "calm, neutral, simple wording",
-        "Expertise": "professional yet patient-friendly, minimal jargon",
+        "Kind": "환자가 이해하기 쉽게 따뜻한 어조로, 어려운 의학 용어는 풀어서 설명",
+        "Neutral": "균형 잡힌 설명, 기술 용어는 간단히 정의하며 객관적으로 설명",
+        "Expertise": "전문적 어조로, 병리와 약물기전까지 구체적으로 설명",
     }
     length_map = {
-        "Short": "concise in 4-6 sentences",
-        "Normal": "7-10 sentences with short paragraphs",
-        "Detail": "10-15 sentences with short paragraphs and clear bullet points",
+        "Short": "요약형 (4~6문장)",
+        "Normal": "표준형 (7~10문장)",
+        "Detail": "상세형 (10~15문장, 단락 구분 포함)",
     }
-    lang_tag = "Korean" if language == "한국어" else "English"
 
     return f"""
-You are a medical explainer assistant. Output in {lang_tag}.
-STYLE: {tone_map.get(tone, 'calm, neutral')}, {length_map.get(length, 'concise')}
-CRITICAL RULES:
-- Use ONLY the data provided below. Do NOT invent facts.
-- No diagnosis or prescription. This is an educational summary for a demo.
-- Prefer plain words over medical jargon. Explain terms when unavoidable.
-- Structure with brief paragraphs and bullet points if helpful.
-- Include a gentle disclaimer at the end.
+당신은 **AI 기반 신약개발 프로젝트 MINDMAP**의 의학 보고서 생성 보조자입니다.
+모든 출력은 {language}로 작성하며, 환자 맞춤형으로 다음 항목을 종합하여 설명하세요:
 
-DATA:
-[Patient]
-- Name: {patient['name']}
-- Age: {patient['age']}
-- Gender: {patient['gender']}
-- Comorbidities: {', '.join(patient['comorbidities']) if patient['comorbidities'] else '없음'}
+### 📊 AI 예측 결과
+- 분류 단계: {ai_result['label']}  
+- 위험도: {ai_result['risk']}  
+- 알츠하이머 예측 확률: {ai_result['prob']}%
 
-[AI Result]
-- Predicted label: {ai_result['label']}
-- Risk band: {ai_result['risk']}
-- Estimated probability: {ai_result['prob']}%
+### 🧬 환자 정보
+- 이름: {patient['name']}  
+- 나이: {patient['age']}  
+- 성별: {patient['gender']}  
+- 기저질환: {', '.join(patient['comorbidities']) if patient['comorbidities'] else '없음'}
 
-[Medication Plan (demo rules)]
-- Recommended: {recommended if recommended else ['없음']}
-- Use with caution: {caution if caution else ['없음']}
-- Avoid: {avoid if avoid else ['없음']}
+### 💊 약물 추천 요약
+- 권장: {recommended if recommended else ['없음']}
+- 주의: {caution if caution else ['없음']}
+- 피해야 함: {avoid if avoid else ['없음']}
 
-TASK:
-Write a friendly explanation that:
-1) Summarizes what the AI result practically means for the user.
-2) Mentions how comorbidities affect medication considerations (demo logic).
-3) Highlights 2-4 key next steps users can take to talk with clinicians.
-4) Avoids strong medical claims. No medication instructions or dosages.
-5) Ends with a short disclaimer (e.g., '이 내용은 학술제 목적의 데모 설명입니다...').
+###  작성 지침
+1. AI 분석 결과가 의미하는 임상적 상황을 간결히 해석하라.  
+   (예: “경도 치매 단계로, 인지저하가 시작된 초기 상태로 보입니다.”)
+2. 환자의 **기저질환과 연관된 약물 선택의 이유**를 논리적으로 설명하라.  
+   (예: “당뇨 환자에게는 위장 부작용이 적은 리바스티그민 패치가 적합합니다.”)
+3. 권장 약물의 작용기전과 기대효과를 간단히 요약하라.
+4. ‘주의’ 또는 ‘피해야 함’ 약물이 있다면, **이유를 구체적으로 명시**하라.
+5. 가능한 경우, **일상적 조언** 수준으로 환자에게 전달하듯 정리하라.
+6. {tone_map.get(tone, '중립적 어조')}, {length_map.get(length, '표준 길이')}로 작성.
+7. 결론에는 반드시 다음 문구로 끝내라:  
+   “이 설명은 학술제 목적의 예시이며, 실제 진단 및 처방을 대체하지 않습니다.”
 """
+
 # ===================== LLM: ChatGPT 호출 =====================
 def generate_llm_explanation(client, info, res, plan, tone="Kind", length="Normal", language="한국어"):
     if client is None:
@@ -679,6 +763,29 @@ def generate_llm_explanation(client, info, res, plan, tone="Kind", length="Norma
     except Exception as e:
         st.error(f"LLM 호출 실패: {e}")
         return "LLM 호출에 실패하여 기본 설명을 표시합니다."
+# ===================== LLM 톤/길이 매핑 & 기본값 =====================
+# UI 라벨 ↔ 내부 코드값
+TONE_OPTIONS = [("친절하게", "Kind"), ("중립적", "Neutral"), ("전문적", "Expertise")]
+LENGTH_OPTIONS = [("짧게", "Short"), ("보통", "Normal"), ("길게", "Detail")]
+
+def _index_of_internal(options, internal_value, fallback=0):
+    for i, (_, code) in enumerate(options):
+        if code == internal_value:
+            return i
+    return fallback
+
+def infer_defaults_from_age_simple(age):
+    """
+    60세 이상: 친절/보통  (Kind/Normal)
+    그 외:    중립/보통  (Neutral/Normal)
+    """
+    try:
+        age = int(age)
+    except Exception:
+        age = None
+    if age is not None and age >= 60:
+        return ("Kind", "Normal")
+    return ("Neutral", "Normal")  # 기본
 
 # ===================== LLM: ChatGPT 페이지 =====================
 def page_llm():
@@ -695,23 +802,65 @@ def page_llm():
         app_footer()
         return
 
-    # 개인화 약물 플랜 재계산 (report와 동일 기준)
+    # 개인화 약물 플랜
     stage = res.get("stage", "NonDemented")
     diseases = info.get("기저질환", []) or []
     plan = personalize_drugs(stage, diseases)
 
-    col1, col2, col3 = st.columns(3)
+    # 1) 연령 기반 기본값(간단 규칙)
+    age = info.get("나이", None)
+    default_tone_code, default_length_code = infer_defaults_from_age_simple(age)
+
+    # 2) 자동/수동 토글
+    manual = st.toggle("사용자 설정 직접 선택", value=False, help="끄면 연령에 따라 자동으로 톤/길이를 설정합니다.")
+
+    # 3) 한국어 UI 라벨
+    tone_labels = [lbl for (lbl, _) in TONE_OPTIONS]
+    length_labels = [lbl for (lbl, _) in LENGTH_OPTIONS]
+
+    # 4) 기본 인덱스
+    tone_default_idx = _index_of_internal(TONE_OPTIONS, default_tone_code, fallback=1)
+    length_default_idx = _index_of_internal(LENGTH_OPTIONS, default_length_code, fallback=1)
+
+    # 5) 선택 UI (언어 선택 제거, 항상 한국어)
+    col1, col2 = st.columns(2)
     with col1:
-        tone = st.selectbox("톤", ["친절하게", "중립적", "전문적"], index=0)
+        tone_ui = st.selectbox(
+            "톤",
+            tone_labels,
+            index=tone_default_idx,
+            disabled=not manual,
+        )
     with col2:
-        length = st.selectbox("길이", ["짧게", "보통", "길게"], index=1)
-    with col3:
-        language = st.selectbox("언어", ["한국어", "English"], index=0)
+        length_ui = st.selectbox(
+            "길이",
+            length_labels,
+            index=length_default_idx,
+            disabled=not manual
+        )
+
+    # 6) 내부 코드 확정
+    if manual:
+        # 한국어 라벨 → 내부 코드값
+        tone_code = dict(TONE_OPTIONS)[tone_ui]
+        length_code = dict(LENGTH_OPTIONS)[length_ui]
+    else:
+        tone_code, length_code = default_tone_code, default_length_code
+
+    st.caption(f"현재 설정 · 톤: **{tone_code}** / 길이: **{length_code}** / 언어: **한국어**")
 
     if st.button("LLM 설명하기"):
         with st.spinner("설명 생성 중..."):
             client = get_openai_client()
-            text = generate_llm_explanation(client, info, res, plan, tone, length, language)
+            text = generate_llm_explanation(
+                client,
+                info,
+                res,
+                plan,
+                tone=tone_code,       # "Kind/Neutral/Expertise"
+                length=length_code,   # "Short/Normal/Detail"
+                language="한국어"     # 한국어 고정
+            )
         st.markdown(text)
 
     st.write("")
