@@ -175,16 +175,24 @@ def page_info():
         age = st.number_input("나이 *", min_value=1, max_value=120, step=1)
         gender = st.radio("성별 *", ["남자", "여자"], horizontal=True)
 
-        st.subheader("기저질환 선택")
-        disease_list = ["고혈압", "당뇨", "심장질환", "간질환(간경화 등)"]
-        diseases = st.multiselect("해당되는 항목을 모두 선택하세요.", disease_list)
+        st.subheader("건강 상태/기저질환 선택")
+        # 임산부 항목 포함
+        disease_list = ["고혈압", "당뇨", "심장질환", "간질환(간경화 등)", "임신"]
+        diseases = st.multiselect("해당되는 항목을 모두 선택하세요.", disease_list,
+                                  help="* ‘임신’항목은 여성인 경우에만 선택하세요.")
 
         submitted = st.form_submit_button("Next")
+
     if submitted:
         master_key = name.strip().lower() == "admin"
         if not master_key and (not name or not age or not gender):
             st.warning("⚠️ 필수 항목(이름/나이/성별)을 모두 입력해주세요.")
             return
+
+        # 유효성: 남자인데 임산부 선택한 경우 자동 제거
+        if gender != "여자" and "임신(임산부)" in diseases:
+            diseases = [d for d in diseases if d != "임신(임산부)"]
+            st.warning("‘임신(임산부)’ 항목은 여성에게만 해당합니다. 선택에서 제외되었습니다.")
 
         st.session_state.patient_info = {
             "이름": name, "나이": age, "성별": gender, "기저질환": diseases,
@@ -300,6 +308,7 @@ def personalize_drugs(stage: str, comorbidities: list[str]) -> dict:
     has_dm    = "당뇨" in comorbidities
     has_heart = "심장질환" in comorbidities
     has_liver = "간질환(간경화 등)" in comorbidities
+    has_preg  = "임신(임산부)" in comorbidities  # ✅ 추가
 
     # 고혈압
     if has_htn:
@@ -308,7 +317,7 @@ def personalize_drugs(stage: str, comorbidities: list[str]) -> dict:
         _shift(plan, "니세르골린(Nicergoline)", new="caution",
                reason="혈압이 내려갈 수 있습니다. 어지러움이 있을 시 복용 시간을 조절해야 합니다.")
 
-    # 당뇨
+    # 당뇨 
     if has_dm:
         _annotate(plan, "리바스티그민 패치(Rivastigmine Patch)",
                   extra="속 불편이 적어 당뇨 환자도 사용할 수 있습니다.")
@@ -331,6 +340,19 @@ def personalize_drugs(stage: str, comorbidities: list[str]) -> dict:
                   extra="패치제형으로, 간의 부담이 비교적 덜합니다.")
         _annotate(plan, "메만틴(Memantine)",
                   extra="주로 콩팥으로 배설돼 간질환이 있어도 대안이 될 수 있습니다.")
+
+    # 임신(임산부) — 데모 안전 규칙: 전 항목 '주의'로 전환 + 경고 문구 부착
+    if has_preg:
+        # recommended에 있는 항목 전부 caution으로 이동
+        for nm, note in list(plan["recommended"]):
+            _shift(plan, nm, new="caution",
+                   reason="임신/수유 가능성이 있는 경우 반드시 전문의와 상의해야 합니다.")
+        # 이미 caution에 있는 항목은 설명 보강
+        for i, (nm, note) in enumerate(list(plan["caution"])):
+            plan["caution"][i] = (
+                nm,
+                f"{note}; 임신/수유 가능성이 있는 경우 반드시 전문의와 상의해야 합니다."
+            )
 
     if not base:
         return {"recommended": [], "caution": [], "avoid": []}
