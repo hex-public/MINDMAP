@@ -179,7 +179,7 @@ def page_info():
         name = st.text_input("이름 *", key="pf_name")
         age = st.number_input("나이 *", min_value=1, max_value=120, step=1, key="pf_age")
 
-        st.subheader("기저질환 선택")
+        st.subheader("건강 상태 / 기저 질환")
         disease_list = ["고혈압", "당뇨", "심장질환", "간질환(간경화 등)"]
         if st.session_state.get("pf_gender") == "여자":
             disease_list.append("임신(임산부)")
@@ -647,7 +647,7 @@ def build_report_html(info: dict, res: dict, plan: dict) -> str:
       <table class="report-table">
         <tr><th>환자 이름</th><td>{info.get('이름','-')}</td></tr>
         <tr><th>나이 / 성별</th><td>{info.get('나이','-')}세 / {info.get('성별','-')}</td></tr>
-        <tr><th>기저질환</th><td>{diseases_str}</td></tr>
+        <tr><th>건강 상태 / 기저질환</th><td>{diseases_str}</td></tr>
         <tr class="important-result"><th>YOLOv8 분석 결과</th><td>{ai_text}</td></tr>
       </table>
 
@@ -657,151 +657,89 @@ def build_report_html(info: dict, res: dict, plan: dict) -> str:
     </div>
     """
 #=======================리포트======================
-def page_report():
-    app_header()
-    st.title("보고서")
-
-    res = st.session_state.get("result") or {}
-    info = st.session_state.get("patient_info") or {}
-    if not res or not info:
-        st.warning("표시할 결과가 없습니다.")
-        if st.button("뒤로가기"):
-            st.session_state.page = "result"
-            st.rerun()
-        app_footer()
-        return
-
-    # 최신 개인화 플랜 계산(세션에 저장 안 해도 됨)
-    stage = res.get("stage", "NonDemented")
-    diseases = info.get("기저질환", []) or []
-    plan = personalize_drugs(stage, diseases)
-
-    # 1) HTML 생성
-    report_html = build_report_html(info, res, plan)
-
-    # 2) 컴포넌트로 렌더 (아이프레임)
-    # height는 필요에 따라 조정(아래 팁 참고)
-    components.html(
-        html=report_html,
-        height=900,        # 페이지 길면 1000~1200 정도로
-        scrolling=True,    # 내부 스크롤 허용
-    )
-
-    # 3) 다운로드 버튼은 그대로 유지 가능
-    st.download_button(
-        label="HTML 보고서 다운로드",
-        data=report_html.encode("utf-8"),
-        file_name=f"{info.get('이름','환자')}_AI_치매_예측_보고서.html",
-        mime="text/html"
-    )
-
-    # 네비게이션
-    st.write("")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("결과로 돌아가기"):
-            st.session_state.page = "result"
-            st.rerun()
-    with col2:
-        if st.button("홈으로"):
-            st.session_state.update(page="info", patient_info={}, image=None, result=None)
-            st.rerun()
-
-    with col3:
-        if st.button("LLM 설명으로 이동"):
-            st.session_state.page = "llm"
-            st.rerun()
-    app_footer()
-
-
-# ===================== LLM: ChatGPT 셋업 =====================
 def build_explanation_prompt(info: dict, res: dict, plan: dict, tone: str, length: str, language: str):
-    """
-    종합 설명 중심 프롬프트 (약물·기저질환 포함) + 임신 안내 블록(부드러운 톤)
-    """
+    """LLM 출력의 '톤(어투)'와 '길이/형식'을 강제하는 프롬프트 (MINDMAP 전용)"""
+
     def flat(bucket: str):
         items = plan.get(bucket, [])
-        return [f"{nm} - {note}" for (nm, note) in items]
-
-    recommended = flat("recommended")
-    caution     = flat("caution")
-    avoid       = flat("avoid")
+        return [f"{nm} - {note}" for (nm, note) in items] or ["없음"]
 
     patient = {
         "name": info.get("이름","-"),
         "age": info.get("나이","-"),
         "gender": info.get("성별","-"),
-        "comorbidities": info.get("기저질환", [])
+        "comorbidities": info.get("기저질환", []),
     }
     ai_result = {
         "label": res.get("label","-"),
         "risk": res.get("risk","-"),
-        "prob": int(res.get("prob_alzheimer",0)*100)
+        "prob": int(res.get("prob_alzheimer",0)*100),
+    }
+    recommended = flat("recommended")
+    caution     = flat("caution")
+    avoid       = flat("avoid")
+
+    # 톤 지침
+    tone_guides = {
+        "Kind": "환자에게 직접 말하듯 2인칭으로 따뜻하고 공감 있게 서술하며, 의학 용어는 쉬운 말로 풀어쓴다.",
+        "Neutral": "객관적이고 균형 잡힌 설명으로, 의학적 사실을 간결하고 정확히 전달한다.",
+        "Expertise": "전문가 보고서 톤으로, 병리·약물기전·수용체·부작용·모니터링까지 구체적으로 서술한다.",
     }
 
-    tone_map = {
-        "Kind": "환자가 이해하기 쉽게 따뜻한 어조로, 어려운 의학 용어는 풀어서 설명",
-        "Neutral": "균형 잡힌 설명, 기술 용어는 간단히 정의하며 객관적으로 설명",
-        "Expertise": "전문적 어조로, 병리와 약물기전까지 구체적으로 설명",
-    }
-    length_map = {
-        "Short": "요약형 (4~6문장)",
-        "Normal": "표준형 (7~10문장)",
-        "Detail": "상세형 (10~15문장, 단락 구분 포함)",
+    # 길이/형식 지침
+    length_guides = {
+        "Short": "4~6문장 한 단락. 절대 줄바꿈·불릿 금지.",
+        "Normal": "1~2단락. 필요 시 짧은 불릿(최대 3개) 허용.",
+        "Detail": "## 소제목 섹션으로 구분(요약, 임상 해석, 약물 선택, 주의, 생활 조언). 각 섹션 2~5문장 또는 불릿.",
     }
 
-    # 임신 관련 부드러운 안내 문단 구성
-    PREG_COMMON = "임신, 수유 시에는 약 사용을 조금 더 신중히 결정해야합니다."
-    PREGNANCY_NOTES = {
-        "레카네맙(Lecanemab)": "임신 중 자료가 충분하지 않습니다.",
-        "세레브로리신(Cerebrolysin)": "임부 대상 자료가 아직 많지 않습니다.",
-        "갈란타민(Galantamine)": "임부 임상자료는 부족하나, 동물시험상 큰 이상 보고는 적습니다."
-    }
-
-    pregnancy_clause = ""
+    preg_block = ""
     if any(x in patient["comorbidities"] for x in ("임신", "임신(임산부)")):
-        pregnancy_clause = (
-            f"\n\n### 🤰 임신 관련 안내\n"
-            f"- {PREG_COMMON}\n"
-            f"- 레카네맙: {PREGNANCY_NOTES['레카네맙(Lecanemab)']}\n"
-            f"- 세레브로리신: {PREGNANCY_NOTES['세레브로리신(Cerebrolysin)']}\n"
-            f"- 갈란타민: {PREGNANCY_NOTES['갈란타민(Galantamine)']}"
+        preg_block = (
+            "- 임신/수유 가능성이 있으면 약물 사용 전 전문의 상담 필요. "
+            "레카네맙: 임부 자료 부족 / 세레브로리신: 임부 자료 부족 / 갈란타민: 임상자료 제한적."
         )
 
-    return f"""
-당신은 **AI 기반 사용자의 Brain MRI를 분석하여 알츠하이머를 예측 및 맞춤 약물 추천 프로젝트 MINDMAP**의 의학 보고서 생성 보조자입니다.
-모든 출력은 {language}로 작성하며, 환자 맞춤형으로 다음 항목을 종합하여 설명하세요:
-
-### 📊 AI 예측 결과
-- 분류 단계: {ai_result['label']}  
-- 위험도: {ai_result['risk']}  
-- 알츠하이머 예측 확률: {ai_result['prob']}%
-
-### 🧬 환자 정보
-- 이름: {patient['name']}  
-- 나이: {patient['age']}  
-- 성별: {patient['gender']}  
-- 기저질환: {', '.join(patient['comorbidities']) if patient['comorbidities'] else '없음'}
-
-### 💊 약물 추천 요약
-- 권장: {recommended if recommended else ['없음']}
-- 주의: {caution if caution else ['없음']}
-- 피해야 함: {avoid if avoid else ['없음']}
-{pregnancy_clause}
-
-###  작성 지침
-1. AI 분석 결과가 의미하는 임상적 상황을 간결히 해석하라.  
-   (예: “경도 치매 단계로, 인지저하가 시작된 초기 상태로 보입니다.”)
-2. 환자의 **기저질환과 연관된 약물 선택의 이유**를 논리적으로 설명하라.  
-   (예: “당뇨 환자에게는 위장 부작용이 적은 리바스티그민 패치가 적합합니다.”)
-3. 권장 약물의 작용기전과 기대효과를 간단히 요약하라.
-4. ‘주의’ 또는 ‘피해야 함’ 약물이 있다면, **이유를 구체적으로 명시**하라.
-5. 가능한 경우, **일상적 조언** 수준으로 환자에게 전달하듯 정리하라.
-6. {tone_map.get(tone, '중립적 어조')}, {length_map.get(length, '표준 길이')}로 작성.
-7. 결론에는 반드시 다음 문구로 끝내라:  
-   “이 설명은 학술제 목적의 예시이며, 실제 진단 및 처방을 대체하지 않습니다.”
+    context = f"""
+[참고데이터 — 출력에 그대로 복사하지 말 것]
+- 환자: {patient['name']} / {patient['age']}세 / {patient['gender']} / 건강상태 / 기저질환: {', '.join(patient['comorbidities']) if patient['comorbidities'] else '없음'}
+- AI 예측: 라벨={ai_result['label']}, 위험도={ai_result['risk']}, 확률={ai_result['prob']}%
+- 약물 권장: {recommended}
+- 약물 주의: {caution}
+- 약물 피함: {avoid}
+- 임신 주의: {('해당' if preg_block else '해당 없음')}
 """
 
+    hard_rules = f"""
+[출력 규칙 — 매우 중요]
+1) 모든 출력은 {language}로 작성.
+2) 톤: {tone_guides.get(tone)}
+3) 형식: {length_guides.get(length)}
+4) AI 결과·약물·기저질환을 자연스럽게 연결해 기술.
+5) 숫자/퍼센트/약물명은 사실적으로 표현.
+6) 최종 문장은 반드시 다음 문구로 끝내라:  
+   "이 설명은 학술제 목적의 예시이며, 실제 진단 및 처방을 대체하지 않습니다."
+"""
+
+    instructions = """
+[작성 지침]
+1. AI 예측 결과가 의미하는 임상 상태를 설명하라. (예: 경도 단계, 초기 인지 저하 등)
+2. 환자의 기저질환과 약물 권장/주의/피함 사이의 연관성을 구체적으로 서술하라.
+3. 권장 약물의 작용기전, 주요 효과, 대표 부작용을 명시하라.
+4. ‘주의’ 약물은 왜 주의가 필요한지, ‘피함’ 약물은 어떤 이유로 피해야 하는지를 설명하라.
+5. 일상적 조언(식습관, 복약 관리 등)을 1~2문장으로 덧붙여라.
+6. 임신 관련 항목이 있으면 해당 부분을 따로 언급하라.
+7. 글의 길이·톤은 위의 규칙을 엄격히 따른다.
+"""
+
+    task = f"""
+위 [참고데이터]를 바탕으로, {tone_guides.get(tone)}  
+{length_guides.get(length)}  
+{('' if not preg_block else preg_block)}  
+!!! [참고데이터]를 그대로 복사하지 말고 자연스러운 설명문으로 재구성하라.
+"""
+
+    return f"{context}\n{hard_rules}\n{instructions}\n{task}"
 
 # ===================== LLM: ChatGPT 호출 =====================
 def generate_llm_explanation(client, info, res, plan, tone="Kind", length="Normal", language="한국어"):
@@ -836,7 +774,7 @@ def _index_of_internal(options, internal_value, fallback=0):
 
 def infer_defaults_from_age_simple(age):
     """
-    60세 이상: 친절/보통  (Kind/Normal)
+    60세 이상: 친절/짧게  (Kind/Short)
     그 외:    중립/보통  (Neutral/Normal)
     """
     try:
@@ -844,8 +782,8 @@ def infer_defaults_from_age_simple(age):
     except Exception:
         age = None
     if age is not None and age >= 60:
-        return ("Kind", "Normal")
-    return ("Neutral", "Normal")  # 기본
+        return ("Kind", "Short")
+    return ("Neutral", "Normal")
 
 # ===================== LLM: ChatGPT 페이지 =====================
 def page_llm():
