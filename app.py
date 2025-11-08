@@ -6,6 +6,9 @@ from typing import List, Dict, Tuple
 import streamlit as st
 import streamlit.components.v1 as components
 
+import io
+import numpy as np
+
 from PIL import Image, ImageOps
 
 from scripts.cam_cls import gradcam_overlay_for_cls
@@ -165,41 +168,39 @@ with st.sidebar:
         st.caption("관리자 전용 기능입니다.")
 
 # ===================== 페이지: 환자 정보 =====================
-def page_info():
+def page_upload():
     app_header()
-    st.title("인적사항 입력")
+    st.title("MRI 이미지 업로드")
+    st.write("환자 정보를 바탕으로 MRI 이미지를 분석합니다.")
+    st.info("[ jpg / jpeg / png ] 형식만 지원합니다.")
 
-    with st.form("patient_form", clear_on_submit=False):
-        name = st.text_input("이름 *")
-        age = st.number_input("나이 *", min_value=1, max_value=120, step=1)
-        gender = st.radio("성별 *", ["남자", "여자"], horizontal=True)
+    uploaded_file = st.file_uploader("Image type", type=["jpg", "jpeg", "png"])
 
-        st.subheader("건강 상태/기저질환 선택")
-        # 임산부 항목 포함
-        disease_list = ["고혈압", "당뇨", "심장질환", "간질환(간경화 등)", "임신(임산부)"]
-        diseases = st.multiselect("해당되는 항목을 모두 선택하세요.", disease_list,
-                                  help="* ‘임신(임산부)’항목은 여성인 경우에만 선택하세요.")
+    if uploaded_file is not None:
+        try:
+            # UploadedFile → bytes
+            img_bytes = uploaded_file.read()
+            if not img_bytes:
+                raise ValueError("업로드된 파일이 비어 있습니다.")
 
-        submitted = st.form_submit_button("Next")
+            # bytes → PIL(RGB) (포인터/포맷 문제 방지)
+            img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
 
-    if submitted:
-        master_key = name.strip().lower() == "admin"
-        if not master_key and (not name or not age or not gender):
-            st.warning("⚠️ 필수 항목(이름/나이/성별)을 모두 입력해주세요.")
-            return
+            st.image(img, caption="업로드된 MRI 이미지", use_container_width=True)
 
-        # 유효성: 남자인데 임산부 선택한 경우 자동 제거
-        if gender != "여자" and "임신(임산부)" in diseases:
-            diseases = [d for d in diseases if d != "임신(임산부)"]
-            st.warning("‘임신(임산부)’ 항목은 여성에게만 해당합니다. 선택에서 제외되었습니다.")
+            # 분석 버튼
+            if st.button("AI 분석하기"):
+                # 다음 페이지에서 다시 열 수 있게 bytes도 저장
+                st.session_state.image_bytes = img_bytes
+                st.session_state.image = img  # 바로 PIL 사용시
+                st.session_state.page = "analysis"
+                st.rerun()
+        except Exception as e:
+            st.error(f"이미지 처리 중 오류: {e}")
+    else:
+        st.warning("⚠️ MRI 이미지를 업로드해주세요.")
 
-        st.session_state.patient_info = {
-            "이름": name, "나이": age, "성별": gender, "기저질환": diseases,
-        }
-        st.session_state.page = "upload"
-        st.toast("다음 단계로 이동합니다.", icon="➡️")
-        st.rerun()
-
+    st.button("뒤로가기", on_click=lambda: st.session_state.update(page="info"))
     app_footer()
 
 # ===================== 페이지: 업로드 =====================
@@ -222,6 +223,7 @@ def page_upload():
 
     st.button("뒤로가기", on_click=lambda: st.session_state.update(page="info"))
     app_footer()
+
 
 # ===================== 페이지: 분석 중 =====================
 def page_analysis():
