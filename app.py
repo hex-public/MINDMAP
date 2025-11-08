@@ -519,6 +519,58 @@ def page_result():
         ))
 
     app_footer()
+    
+#=======================리포트======================
+def page_report():
+    app_header()
+    st.title("보고서")
+
+    # 결과/환자정보 없을 때
+    res = st.session_state.get("result") or {}
+    info = st.session_state.get("patient_info") or {}
+    if not res or not info:
+        st.warning("표시할 결과가 없습니다.")
+        if st.button("뒤로가기"):
+            st.session_state.page = "result"
+            st.rerun()
+        app_footer()
+        return
+
+    # 개인화 약물 플랜 생성 (result의 stage와 환자 기저질환 기반)
+    stage = res.get("stage", "NonDemented")
+    diseases = info.get("기저질환", []) or []
+    drug_plan = personalize_drugs(stage, diseases)
+
+    # HTML 생성 & 렌더링
+    html = build_report_html(info, res, drug_plan)
+    st.markdown(html, unsafe_allow_html=True)
+
+    # HTML 다운로드
+    html_bytes = html.encode("utf-8")
+    st.download_button(
+        "다운로드(.html)",
+        data=html_bytes,
+        file_name=f"mindmap_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+        mime="text/html",
+    )
+
+    st.divider()
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("뒤로가기"):
+            st.session_state.page = "result"
+            st.rerun()
+    with col2:
+        if st.button("홈으로"):
+            st.session_state.update(page="info", patient_info={}, image=None, result=None)
+            st.rerun()
+    with col3:  
+        if st.button("설명으로 이동"):
+            st.session_state.page = "llm"
+            st.rerun()
+
+
+    app_footer()
 
 # --------------------- HTML 리포트 생성 함수 ---------------------
 def build_report_html(info: dict, res: dict, plan: dict) -> str:
