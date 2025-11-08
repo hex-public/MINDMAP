@@ -17,7 +17,7 @@ def get_model():
 
 import os
 from openai import OpenAI
-from streamlit.runtime.secrets import StreamlitSecretNotFoundError 
+
 def get_openai_client():
     # 1) env
     api_key = os.getenv("OPENAI_API_KEY")
@@ -28,18 +28,16 @@ def get_openai_client():
 
     # 3) secrets
     if not api_key:
-        try:
-            api_key = st.secrets["OPENAI_API_KEY"]
-        except (StreamlitSecretNotFoundError, KeyError):
-            api_key = None
+        # KeyError 방지: get 사용
+        api_key = st.secrets.get("OPENAI_API_KEY")
 
     if not api_key:
         return None
 
-    # 진단용(앞 5자리만 표기)
+    # (선택) 진단용 마스킹
     try:
-        masked = api_key[:5] + "..." if len(api_key) >= 5 else "****"
-        st.caption(f"OpenAI 키 감지됨: {masked}")
+        masked = api_key[:5] + "..." if len(api_key) >= 8 else "****"
+        st.sidebar.write(f"OpenAI 키 감지됨: {masked}")
     except Exception:
         pass
 
