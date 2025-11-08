@@ -1,6 +1,7 @@
 import time
 import matplotlib.pyplot as plt
 from datetime import datetime
+from typing import List, Dict, Tuple
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -177,9 +178,9 @@ def page_info():
 
         st.subheader("건강 상태/기저질환 선택")
         # 임산부 항목 포함
-        disease_list = ["고혈압", "당뇨", "심장질환", "간질환(간경화 등)", "임신"]
+        disease_list = ["고혈압", "당뇨", "심장질환", "간질환(간경화 등)", "임신(임산부)"]
         diseases = st.multiselect("해당되는 항목을 모두 선택하세요.", disease_list,
-                                  help="* ‘임신’항목은 여성인 경우에만 선택하세요.")
+                                  help="* ‘임신(임산부)’항목은 여성인 경우에만 선택하세요.")
 
         submitted = st.form_submit_button("Next")
 
@@ -295,20 +296,31 @@ STAGE_DRUGS = {
     "NonDemented": []
 }
 
+# 한 줄 공통 메시지(짧고 부드럽게)
+PREG_COMMON = "임신·수유 시에는 약 사용을 조금 더 신중히 결정해요. 필요하면 의료진과 꼭 상의해주세요."
+
+# 약물별 짧은 코멘트(친절 톤)
+PREGNANCY_NOTES = {
+    "레카네맙(Lecanemab)": "임신 중 자료가 충분하지 않습니다.",
+    "세레브로리신(Cerebrolysin)": "임부 대상 자료가 아직 많지 않습니다.",
+    "갈란타민(Galantamine)": "임부 임상자료는 부족하나, 동물시험상 큰 이상 보고는 적습니다."
+}
 
 # 기저질환 규칙
-def personalize_drugs(stage: str, comorbidities: list[str]) -> dict:
+def personalize_drugs(stage: str, comorbidities: List[str]) -> Dict[str, List[Tuple[str, str]]]:
     base = STAGE_DRUGS.get(stage, [])
     plan = {"recommended": [], "caution": [], "avoid": []}
 
+    # 기본 추천 적재
     for d in base:
         plan["recommended"].append((d["name"], d["note"]))
 
+    # 표기 차이 허용: "임신" 또는 "임신(임산부)"
+    has_preg  = any(x in comorbidities for x in ("임신", "임신(임산부)"))
     has_htn   = "고혈압" in comorbidities
     has_dm    = "당뇨" in comorbidities
     has_heart = "심장질환" in comorbidities
     has_liver = "간질환(간경화 등)" in comorbidities
-    has_preg  = "임신(임산부)" in comorbidities  # ✅ 추가
 
     # 고혈압
     if has_htn:
@@ -322,43 +334,62 @@ def personalize_drugs(stage: str, comorbidities: list[str]) -> dict:
         _annotate(plan, "리바스티그민 패치(Rivastigmine Patch)",
                   extra="속 불편이 적어 당뇨 환자도 사용할 수 있습니다.")
         _shift(plan, "갈란타민(Galantamine)", new="caution",
-               reason="어지러움 증상이 지속되면 의사와 상의해야합니다.")
+               reason="어지러움 증상이 지속되면 의사와 상의해야 합니다.")
 
     # 심장질환
     if has_heart:
-        for n in ["도네페질(Donepezil)", "리바스티그민(Rivastigmine)", "리바스티그민 패치(Rivastigmine Patch)", "갈란타민(Galantamine)"]:
+        for n in ["도네페질(Donepezil)", "리바스티그민(Rivastigmine)",
+                  "리바스티그민 패치(Rivastigmine Patch)", "갈란타민(Galantamine)"]:
             _shift(plan, n, new="caution",
                    reason="맥박이 느려지거나 가슴 두근거림이 생길 수 있습니다.")
 
     # 간질환
     if has_liver:
         _shift(plan, "도네페질(Donepezil)", new="caution",
-               reason="간이 부담될 수 있어,  용량 처방에 주의가 필요합니다.")
+               reason="간이 부담될 수 있어 용량 처방에 주의가 필요합니다.")
         _shift(plan, "니세르골린(Nicergoline)", new="caution",
-               reason="간 수치가 올라갈 수 있어, 정기 확인이 필요할 수 있습니다.")
+               reason="간 수치가 올라갈 수 있어 정기 확인이 필요할 수 있습니다.")
         _annotate(plan, "리바스티그민 패치(Rivastigmine Patch)",
-                  extra="패치제형으로, 간의 부담이 비교적 덜합니다.")
+                  extra="패치 제형으로 간 부담이 비교적 덜합니다.")
         _annotate(plan, "메만틴(Memantine)",
                   extra="주로 콩팥으로 배설돼 간질환이 있어도 대안이 될 수 있습니다.")
 
-    # 임신(임산부) — 데모 안전 규칙: 전 항목 '주의'로 전환 + 경고 문구 부착
+    # 임신: recommended → caution 전환 + 공통 경고 + 약물별 주의 메모
     if has_preg:
-        # recommended에 있는 항목 전부 caution으로 이동
         for nm, note in list(plan["recommended"]):
-            _shift(plan, nm, new="caution",
-                   reason="임신/수유 가능성이 있는 경우 반드시 전문의와 상의해야 합니다.")
-        # 이미 caution에 있는 항목은 설명 보강
-        for i, (nm, note) in enumerate(list(plan["caution"])):
-            plan["caution"][i] = (
-                nm,
-                f"{note}; 임신/수유 가능성이 있는 경우 반드시 전문의와 상의해야 합니다."
-            )
+            extra = "임신/수유 가능성이 있으면 반드시 전문의와 상의하세요."
+            if nm in PREGNANCY_NOTES:
+                extra = f"{extra} {PREGNANCY_NOTES[nm]}"
+            _shift(plan, nm, new="caution", reason=extra)
 
+        # 이미 caution에 있던 항목에도 주의 문구 보강
+        for i, (nm, note) in enumerate(list(plan["caution"])):
+            extra = "임신/수유 가능성이 있으면 반드시 전문의와 상의하세요."
+            add = PREGNANCY_NOTES.get(nm)
+            if add and add not in note:
+                note = f"{note}; {extra} {add}"
+            elif extra not in note:
+                note = f"{note}; {extra}"
+            plan["caution"][i] = (nm, note)
+
+    # NonDemented 등
     if not base:
         return {"recommended": [], "caution": [], "avoid": []}
 
+    # 중복 제거(규칙 다중 적용 대비)
+    _dedup_plan(plan)
     return plan
 
+def _dedup_plan(plan: dict):
+    for bucket in ("recommended", "caution", "avoid"):
+        seen = {}
+        for nm, note in plan[bucket]:
+            if nm in seen:
+                if note and note not in seen[nm]:
+                    seen[nm] = f"{seen[nm]}; {note}"
+            else:
+                seen[nm] = note
+        plan[bucket] = [(k, v) for k, v in seen.items()]
 
 
 def _shift(plan: dict, drug_name: str, new: str, reason: str):
@@ -672,36 +703,13 @@ def page_report():
             st.rerun()
     app_footer()
 
-# ===================== 페이지: 관리자 대시보드 =====================
-def page_admin():
-    app_header()
-    st.title("관리자 대시보드")
-    if not st.session_state.is_admin:
-        st.error("접근 권한이 없습니다.")
-        if st.button("뒤로가기"):
-            st.session_state.page = "info"
-        return
-
-    st.caption("최근 분석 로그 (세션 메모리 기반)")
-    if not st.session_state.history:
-        st.info("아직 로그가 없습니다.")
-    else:
-        for i, item in enumerate(reversed(st.session_state.history[:20]), start=1):
-            with st.expander(f"#{i} · {item['ts']} · {item['patient'].get('이름','-')}"):
-                st.json(item)
-
-    if st.button("홈으로"):
-        st.session_state.page = "info"
-        st.rerun()
-
-    app_footer()
 
 # ===================== LLM: ChatGPT 셋업 =====================
 def build_explanation_prompt(info: dict, res: dict, plan: dict, tone: str, length: str, language: str):
     """
-    종합 설명 중심 프롬프트 (약물·기저질환 포함)
+    종합 설명 중심 프롬프트 (약물·기저질환 포함) + 임신 안내 블록(부드러운 톤)
     """
-    def flat(bucket):
+    def flat(bucket: str):
         items = plan.get(bucket, [])
         return [f"{nm} - {note}" for (nm, note) in items]
 
@@ -732,8 +740,26 @@ def build_explanation_prompt(info: dict, res: dict, plan: dict, tone: str, lengt
         "Detail": "상세형 (10~15문장, 단락 구분 포함)",
     }
 
+    # 임신 관련 부드러운 안내 문단 구성
+    PREG_COMMON = "임신, 수유 시에는 약 사용을 조금 더 신중히 결정해야합니다."
+    PREGNANCY_NOTES = {
+        "레카네맙(Lecanemab)": "임신 중 자료가 충분하지 않습니다.",
+        "세레브로리신(Cerebrolysin)": "임부 대상 자료가 아직 많지 않습니다.",
+        "갈란타민(Galantamine)": "임부 임상자료는 부족하나, 동물시험상 큰 이상 보고는 적습니다."
+    }
+
+    pregnancy_clause = ""
+    if any(x in patient["comorbidities"] for x in ("임신", "임신(임산부)")):
+        pregnancy_clause = (
+            f"\n\n### 🤰 임신 관련 안내\n"
+            f"- {PREG_COMMON}\n"
+            f"- 레카네맙: {PREGNANCY_NOTES['레카네맙(Lecanemab)']}\n"
+            f"- 세레브로리신: {PREGNANCY_NOTES['세레브로리신(Cerebrolysin)']}\n"
+            f"- 갈란타민: {PREGNANCY_NOTES['갈란타민(Galantamine)']}"
+        )
+
     return f"""
-당신은 **AI 기반 신약개발 프로젝트 MINDMAP**의 의학 보고서 생성 보조자입니다.
+당신은 **AI 기반 사용자의 Brain MRI를 분석하여 알츠하이머를 예측 및 맞춤 약물 추천 프로젝트 MINDMAP**의 의학 보고서 생성 보조자입니다.
 모든 출력은 {language}로 작성하며, 환자 맞춤형으로 다음 항목을 종합하여 설명하세요:
 
 ### 📊 AI 예측 결과
@@ -751,6 +777,7 @@ def build_explanation_prompt(info: dict, res: dict, plan: dict, tone: str, lengt
 - 권장: {recommended if recommended else ['없음']}
 - 주의: {caution if caution else ['없음']}
 - 피해야 함: {avoid if avoid else ['없음']}
+{pregnancy_clause}
 
 ###  작성 지침
 1. AI 분석 결과가 의미하는 임상적 상황을 간결히 해석하라.  
@@ -764,6 +791,7 @@ def build_explanation_prompt(info: dict, res: dict, plan: dict, tone: str, lengt
 7. 결론에는 반드시 다음 문구로 끝내라:  
    “이 설명은 학술제 목적의 예시이며, 실제 진단 및 처방을 대체하지 않습니다.”
 """
+
 
 # ===================== LLM: ChatGPT 호출 =====================
 def generate_llm_explanation(client, info, res, plan, tone="Kind", length="Normal", language="한국어"):
@@ -896,7 +924,30 @@ def page_llm():
 
     app_footer()
 
+# ===================== 페이지: 관리자 대시보드 =====================
+def page_admin():
+    app_header()
+    st.title("관리자 대시보드")
+    if not st.session_state.is_admin:
+        st.error("접근 권한이 없습니다.")
+        if st.button("뒤로가기"):
+            st.session_state.page = "info"
+        return
 
+    st.caption("최근 분석 로그 (세션 메모리 기반)")
+    if not st.session_state.history:
+        st.info("아직 로그가 없습니다.")
+    else:
+        for i, item in enumerate(reversed(st.session_state.history[:20]), start=1):
+            with st.expander(f"#{i} · {item['ts']} · {item['patient'].get('이름','-')}"):
+                st.json(item)
+
+    if st.button("홈으로"):
+        st.session_state.page = "info"
+        st.rerun()
+
+    app_footer()
+    
 # ===================== 라우팅 =====================
 PAGES = {
     "info": page_info,
