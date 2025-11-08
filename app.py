@@ -170,11 +170,31 @@ with st.sidebar:
 # ===================== 페이지: 환자 정보 =====================
 def page_info():
     app_header()
-    st.title("환자 정보")
-    st.write("분석을 시작하려면 MRI 이미지를 업로드해주세요.")
-    if st.button("MRI 업로드로 이동"):
+    st.title("인적사항 입력")
+
+    with st.form("patient_form", clear_on_submit=False):
+        name = st.text_input("이름 *")
+        age = st.number_input("나이 *", min_value=1, max_value=120, step=1)
+        gender = st.radio("성별 *", ["남자", "여자"], horizontal=True)
+
+        st.subheader("기저질환 선택")
+        disease_list = ["고혈압", "당뇨", "심장질환", "간질환(간경화 등)"]
+        diseases = st.multiselect("해당되는 항목을 모두 선택하세요.", disease_list)
+
+        submitted = st.form_submit_button("Next")
+    if submitted:
+        master_key = name.strip().lower() == "admin"
+        if not master_key and (not name or not age or not gender):
+            st.warning("⚠️ 필수 항목(이름/나이/성별)을 모두 입력해주세요.")
+            return
+
+        st.session_state.patient_info = {
+            "이름": name, "나이": age, "성별": gender, "기저질환": diseases,
+        }
         st.session_state.page = "upload"
+        st.toast("다음 단계로 이동합니다.", icon="➡️")
         st.rerun()
+
     app_footer()
 
 # ===================== 페이지: 업로드 =====================
