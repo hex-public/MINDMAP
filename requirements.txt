@@ -20,6 +20,9 @@ grad-cam==1.5.0
 # OpenCV
 opencv-python-headless==4.9.0.80
 
+# OpenAI
+openai>=1.12.0
+
 # 기타
 scikit-learn==1.4.2
 tqdm==4.66.4
