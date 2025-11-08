@@ -1,5 +1,5 @@
 # core
-streamlit==1.39.0
+streamlit>=1.39.0
 pandas==2.3.3
 numpy==1.26.4
 pillow==10.4.0
