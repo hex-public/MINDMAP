@@ -179,6 +179,8 @@ def page_info():
 
         st.subheader("기저질환 선택")
         disease_list = ["고혈압", "당뇨", "심장질환", "간질환(간경화 등)"]
+        if gender == "여자":
+            disease_list.append("임신(임산부)")
         diseases = st.multiselect("해당되는 항목을 모두 선택하세요.", disease_list)
 
         submitted = st.form_submit_button("Next")
