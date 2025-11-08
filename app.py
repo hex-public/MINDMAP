@@ -631,7 +631,7 @@ def build_report_html(info: dict, res: dict, plan: dict) -> str:
             preg_banner = """
             <div class="alert-preg">
               임신/수유 관련 안내: 임신, 수유 시 대부분의 약물은 신중히 사용해야 하므로,
-              아래 약물은 ‘주의’ 항목으로 표시됩니다. 복용 전 반드시 전문의와 상의하세요.
+              아래 약물은 ‘주의’ 항목으로 표시됩니다.
             </div>
             """
 
