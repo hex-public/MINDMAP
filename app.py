@@ -21,23 +21,36 @@ def get_model():
 import os
 from openai import OpenAI
 
+# 맨 위 한 번만(로컬에서 import 에러 방지용)
+try:
+    from streamlit.runtime.secrets import StreamlitSecretNotFoundError
+except Exception:
+    class StreamlitSecretNotFoundError(Exception):
+        pass
+
 def get_openai_client():
-    # 1) env
+    import os
+    from openai import OpenAI
+
+    # 1) ENV
     api_key = os.getenv("OPENAI_API_KEY")
 
-    # 2) session
+    # 2) SESSION
     if not api_key:
         api_key = st.session_state.get("OPENAI_API_KEY")
 
-    # 3) secrets
+    # 3) SECRETS (파일이 없으면 예외 나므로 try로 보호)
     if not api_key:
-        # KeyError 방지: get 사용
-        api_key = st.secrets.get("OPENAI_API_KEY")
+        try:
+            # "in" 체크도 파싱을 유발할 수 있어 접근 전체를 try로 감싼다
+            api_key = st.secrets["OPENAI_API_KEY"]  # 키 없으면 KeyError, 파일 없으면 StreamlitSecretNotFoundError
+        except (StreamlitSecretNotFoundError, KeyError):
+            api_key = None
 
     if not api_key:
         return None
 
-    # (선택) 진단용 마스킹
+    # (선택) 마스킹 표시
     try:
         masked = api_key[:5] + "..." if len(api_key) >= 8 else "****"
         st.sidebar.write(f"OpenAI 키 감지됨: {masked}")
@@ -45,6 +58,30 @@ def get_openai_client():
         pass
 
     return OpenAI(api_key=api_key)
+
+# ====== 단계/위험도 표시 유틸 ======
+STAGE_KO_MAP = {
+    "VeryMildDemented": "매우 경도(초기) 치매 의심",
+    "MildDemented": "경도 치매 의심",
+    "ModerateDemented": "중등도 치매 의심",
+    "NonDemented": "치매 비의심(정상 범주)"
+}
+
+def stage_to_korean(label: str) -> str:
+    return STAGE_KO_MAP.get(label, label or "-")
+
+def risk_text(prob_float: float) -> str:
+    try:
+        pct = int(float(prob_float) * 100)
+    except Exception:
+        pct = 0
+    if pct >= 66:
+        bucket = "High"
+    elif pct >= 33:
+        bucket = "Medium"
+    else:
+        bucket = "Low"
+    return f"{pct}% ({bucket})"
 
 #=======================제목=============================
 st.set_page_config(
@@ -519,70 +556,49 @@ def page_result():
         ))
 
     app_footer()
-    
-#=======================리포트======================
-def page_report():
-    app_header()
-    st.title("보고서")
-
-    # 결과/환자정보 없을 때
-    res = st.session_state.get("result") or {}
-    info = st.session_state.get("patient_info") or {}
-    if not res or not info:
-        st.warning("표시할 결과가 없습니다.")
-        if st.button("뒤로가기"):
-            st.session_state.page = "result"
-            st.rerun()
-        app_footer()
-        return
-
-    # 개인화 약물 플랜 생성 (result의 stage와 환자 기저질환 기반)
-    stage = res.get("stage", "NonDemented")
-    diseases = info.get("기저질환", []) or []
-    drug_plan = personalize_drugs(stage, diseases)
-
-    # HTML 생성 & 렌더링
-    html = build_report_html(info, res, drug_plan)
-    st.markdown(html, unsafe_allow_html=True)
-
-    # HTML 다운로드
-    html_bytes = html.encode("utf-8")
-    st.download_button(
-        "다운로드(.html)",
-        data=html_bytes,
-        file_name=f"mindmap_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
-        mime="text/html",
-    )
-
-    st.divider()
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("뒤로가기"):
-            st.session_state.page = "result"
-            st.rerun()
-    with col2:
-        if st.button("홈으로"):
-            st.session_state.update(page="info", patient_info={}, image=None, result=None)
-            st.rerun()
-    with col3:  
-        if st.button("설명으로 이동"):
-            st.session_state.page = "llm"
-            st.rerun()
-
-
-    app_footer()
 
 # --------------------- HTML 리포트 생성 함수 ---------------------
+from typing import List, Tuple  # 상단에 이미 있으면 중복 import 불필요
+
 def build_report_html(info: dict, res: dict, plan: dict) -> str:
+    """보고서 HTML을 생성해 반환한다. (임신 시 약물 전부 '주의' 처리 + 안내 배너 표시)"""
     risk = res.get("risk")
     color = "#b91c1c" if risk in ("High", "Medium") else "#166534"
-    ai_text = f"<span style='font-weight:bold; color:{color};'>{res.get('label','-')}</span> · {int(res.get('prob_alzheimer',0)*100)}%"
+    ai_text = (
+        f"<span style='font-weight:bold; color:{color};'>"
+        f"{res.get('label','-')}</span> · {int(res.get('prob_alzheimer',0)*100)}%"
+    )
 
     diseases = info.get("기저질환", []) or []
     diseases_str = ", ".join(diseases) if diseases else "없음"
+    has_preg = any(x in diseases for x in ("임신", "임신(임산부)"))
 
-    # --- 약물 섹션: 카드형 + 배지, 비어있으면 섹션 자체 숨김 ---
-    def _cards_html(bucket_title: str, items: list[tuple[str, str]], badge_class: str) -> str:
+    # --- 임신/수유일 때: 모든 권장 → 주의로 강제 이동(서버 로직 중복 대비, 여기서도 보정) ---
+    if has_preg and plan:
+        rec_list = list(plan.get("recommended", []))
+        if rec_list:
+            plan["recommended"] = []  # 권장 비우고
+            # 기존 주의 리스트에 임신 주의 문구를 덧붙여 이동
+            caution = plan.get("caution", [])
+            for nm, note in rec_list:
+                extra = "임신/수유 가능성이 있으면 반드시 전문의와 상의하세요."
+                if "임신/수유" not in (note or ""):
+                    note = f"{(note or '').strip()}{'; ' if note else ''}{extra}"
+                caution.append((nm, note))
+            plan["caution"] = caution
+
+        # 이미 주의에 있는 항목에도 안내문이 없다면 보강
+        if "caution" in plan:
+            new_caution = []
+            for nm, note in plan["caution"]:
+                if "임신/수유" not in (note or ""):
+                    note = f"{(note or '').strip()}{'; ' if note else ''}임신/수유 가능성이 있으면 반드시 전문의와 상의하세요."
+                new_caution.append((nm, note))
+            plan["caution"] = new_caution
+
+    # --- 약물 카드 HTML 생성 (비어있으면 섹션 숨김) ---
+    from typing import List, Tuple
+    def _cards_html(bucket_title: str, items: List[Tuple[str, str]], badge_class: str) -> str:
         if not items:
             return ""  # 비어있으면 아예 표시 안 함
         cards = []
@@ -604,15 +620,27 @@ def build_report_html(info: dict, res: dict, plan: dict) -> str:
         cau_cards = _cards_html("주의",  plan.get("caution", []),     "cau")
         avd_cards = _cards_html("피함",  plan.get("avoid", []),        "avd")
 
+        # 상단 카운트
+        n_rec = len(plan.get("recommended", []))
+        n_cau = len(plan.get("caution", []))
+        n_avd = len(plan.get("avoid", []))
+
+        # 임신 안내 배너(있을 때만)
+        preg_banner = ""
+        if has_preg:
+            preg_banner = """
+            <div class="alert-preg">
+              임신/수유 관련 안내: 임신, 수유 시 대부분의 약물은 신중히 사용해야 하므로,
+              아래 약물은 ‘주의’ 항목으로 표시됩니다. 복용 전 반드시 전문의와 상의하세요.
+            </div>
+            """
+
         # 전부 비어있으면 섹션 숨김
         if not (rec_cards or cau_cards or avd_cards):
-            drugs_html = ""
+            drugs_html = preg_banner
         else:
-            # 상단에 간단한 카운트 배지 + 그리드 카드
-            n_rec = len(plan.get("recommended", []))
-            n_cau = len(plan.get("caution", []))
-            n_avd = len(plan.get("avoid", []))
             drugs_html = f"""
+            {preg_banner}
             <div class="drug-section">
               <h4 class="drug-title">💊 약물 요약
                 <span class="chip rec">권장 {n_rec}</span>
@@ -656,8 +684,19 @@ def build_report_html(info: dict, res: dict, plan: dict) -> str:
       }}
       .important-result td {{ background-color: #fffacd; font-size: 16px; }}
 
+      /* --- 안내 배너(임신/수유) --- */
+      .alert-preg {{
+        margin-top: 14px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: #fff7ed;
+        color: #9a3412;
+        border: 1px solid #ffedd5;
+        font-size: 13px;
+      }}
+
       /* --- 약물 섹션 스타일 --- */
-      .drug-section {{ margin-top: 22px; }}
+      .drug-section {{ margin-top: 16px; }}
       .drug-title {{ margin: 0 0 10px 0; display:flex; align-items:center; gap:8px; }}
       .chip {{
         display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600;
@@ -695,7 +734,6 @@ def build_report_html(info: dict, res: dict, plan: dict) -> str:
         <p>알츠하이머 AI 예측 결과</p>
       </div>
 
-
       <table class="report-table">
         <tr><th>환자 이름</th><td>{info.get('이름','-')}</td></tr>
         <tr><th>나이 / 성별</th><td>{info.get('나이','-')}세 / {info.get('성별','-')}</td></tr>
@@ -708,90 +746,151 @@ def build_report_html(info: dict, res: dict, plan: dict) -> str:
       <p class="report-note">※ 본 결과는 AI 분석 결과이며, 최종적인 판단은 전문의 상담이 필요합니다.</p>
     </div>
     """
-#=======================리포트======================
+
+
+# ======================= 페이지: 보고서 =======================
+def page_report():
+    app_header()
+    st.title("보고서")
+
+    res  = st.session_state.get("result") or {}
+    info = st.session_state.get("patient_info") or {}
+
+    if not res or not info:
+        st.warning("표시할 결과가 없습니다.")
+        if st.button("뒤로가기"):
+            st.session_state.page = "result"
+            st.rerun()
+        app_footer()
+        return
+
+    # 최신 개인화 플랜 계산
+    stage    = res.get("stage", "NonDemented")
+    diseases = info.get("기저질환", []) or []
+    plan     = personalize_drugs(stage, diseases)
+
+    # 1) HTML 생성
+    report_html = build_report_html(info, res, plan)
+
+    # 2) HTML 렌더 (아이프레임 격리: CSS 충돌 방지)
+    components.html(
+        html=report_html,
+        height=900,         # 길면 1000~1200으로 조절
+        scrolling=True,     # 내부 스크롤 허용
+    )
+
+    # 3) 다운로드 버튼
+    st.download_button(
+        label="HTML 보고서 다운로드",
+        data=report_html.encode("utf-8"),
+        file_name=f"{info.get('이름','환자')}_AI_치매_예측_보고서.html",
+        mime="text/html",
+    )
+
+    # 네비게이션
+    st.write("")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("결과로 돌아가기"):
+            st.session_state.page = "result"
+            st.rerun()
+    with col2:
+        if st.button("홈으로"):
+            st.session_state.update(page="info", patient_info={}, image=None, result=None)
+            st.rerun()
+    with col3:
+        if st.button("LLM 설명으로 이동"):
+            st.session_state.page = "llm"
+            st.rerun()
+
+    app_footer()
+
+#=======================ChatGPT====================
 def build_explanation_prompt(info: dict, res: dict, plan: dict, tone: str, length: str, language: str):
-    """LLM 출력의 '톤(어투)'와 '길이/형식'을 강제하는 프롬프트 (MINDMAP 전용)"""
+    """설명문에서 '환자/사용자' 금지, 오직 이름(…님) 호칭만 사용."""
+    name = (info.get("이름") or "이름 미기입").strip()
+    age  = info.get("나이","-")
+    gender = info.get("성별","-")
+    comorbidities = info.get("기저질환", []) or []
+
+    label = res.get("label","-")
+    prob  = res.get("prob_alzheimer", 0.0)
+
+    stage_ko  = stage_to_korean(label)
+    risk_line = risk_text(prob)  # 예: "78% (High)"
 
     def flat(bucket: str):
         items = plan.get(bucket, [])
         return [f"{nm} - {note}" for (nm, note) in items] or ["없음"]
 
-    patient = {
-        "name": info.get("이름","-"),
-        "age": info.get("나이","-"),
-        "gender": info.get("성별","-"),
-        "comorbidities": info.get("기저질환", []),
-    }
-    ai_result = {
-        "label": res.get("label","-"),
-        "risk": res.get("risk","-"),
-        "prob": int(res.get("prob_alzheimer",0)*100),
-    }
     recommended = flat("recommended")
     caution     = flat("caution")
     avoid       = flat("avoid")
 
-    # 톤 지침
+    # 톤/형식 가이드: 반드시 "{name}님"으로 호칭, '환자/사용자' 금지
     tone_guides = {
-        "Kind": "환자에게 직접 말하듯 2인칭으로 따뜻하고 공감 있게 서술하며, 의학 용어는 쉬운 말로 풀어쓴다.",
-        "Neutral": "객관적이고 균형 잡힌 설명으로, 의학적 사실을 간결하고 정확히 전달한다.",
-        "Expertise": "전문가 보고서 톤으로, 병리·약물기전·수용체·부작용·모니터링까지 구체적으로 서술한다.",
+        "Kind":      f"{name}님에게 직접 말하듯 따뜻하고 공감 있게 서술하고, 전문용어는 쉬운 말로 풀어쓴다.",
+        "Neutral":   f"객관적이고 간결하게 사실을 전달하되, 문장은 자연스럽고 읽기 쉽게 쓴다.",
+        "Expertise": f"전문가 보고서 톤으로 병태생리·약물기전·부작용·모니터링을 구체적으로 적되 가독성을 유지한다.",
     }
-
-    # 길이/형식 지침
     length_guides = {
-        "Short": "4~6문장 한 단락. 절대 줄바꿈·불릿 금지.",
-        "Normal": "1~2단락. 필요 시 짧은 불릿(최대 3개) 허용.",
-        "Detail": "## 소제목 섹션으로 구분(요약, 임상 해석, 약물 선택, 주의, 생활 조언). 각 섹션 2~5문장 또는 불릿.",
+        "Short":  "4~6문장 한 단락. 줄바꿈/불릿 금지. 첫 문장에 단계와 위험도 %를 요약.",
+        "Normal": "1~2단락. 필요 시 짧은 불릿(최대 3개) 허용. 첫 문단 첫 문장에 단계와 위험도 %를 요약.",
+        "Detail": "## 소제목 섹션(요약, 임상 해석, 약물 선택, 주의, 생활 조언). 각 섹션 2~5문장 또는 짧은 불릿. 요약 섹션 첫 줄에 단계와 위험도 % 명시.",
     }
 
+    # 임신/수유 블록
     preg_block = ""
-    if any(x in patient["comorbidities"] for x in ("임신", "임신(임산부)")):
+    if any(x in comorbidities for x in ("임신", "임신(임산부)")):
         preg_block = (
             "- 임신/수유 가능성이 있으면 약물 사용 전 전문의 상담 필요. "
             "레카네맙: 임부 자료 부족 / 세레브로리신: 임부 자료 부족 / 갈란타민: 임상자료 제한적."
         )
 
+    # 컨텍스트(LLM에게만 보여줄 데이터)
     context = f"""
-[참고데이터 — 출력에 그대로 복사하지 말 것]
-- 환자: {patient['name']} / {patient['age']}세 / {patient['gender']} / 건강상태 / 기저질환: {', '.join(patient['comorbidities']) if patient['comorbidities'] else '없음'}
-- AI 예측: 라벨={ai_result['label']}, 위험도={ai_result['risk']}, 확률={ai_result['prob']}%
+[참고데이터 — 그대로 복사하지 말 것]
+- 이름: {name} / {age}세 / {gender} / 기저질환: {', '.join(comorbidities) if comorbidities else '없음'}
+- AI 예측: 단계={label} → {stage_ko}, 위험도={risk_line}
 - 약물 권장: {recommended}
 - 약물 주의: {caution}
 - 약물 피함: {avoid}
 - 임신 주의: {('해당' if preg_block else '해당 없음')}
 """
 
+    # 출력 규칙
     hard_rules = f"""
 [출력 규칙 — 매우 중요]
 1) 모든 출력은 {language}로 작성.
-2) 톤: {tone_guides.get(tone)}
-3) 형식: {length_guides.get(length)}
-4) AI 결과·약물·기저질환을 자연스럽게 연결해 기술.
-5) 숫자/퍼센트/약물명은 사실적으로 표현.
-6) 최종 문장은 반드시 다음 문구로 끝내라:  
+2) 호칭은 반드시 '{name}님'만 사용하고, '환자'나 '사용자'라는 단어는 절대 쓰지 말 것.
+3) 첫 문장(또는 요약 섹션 1행)에 단계('{stage_ko}')와 위험도('{risk_line}')를 명확히 제시.
+4) 톤: {tone_guides.get(tone)}
+5) 형식: {length_guides.get(length)}
+6) AI 결과·약물·기저질환의 연관성을 자연스럽게 설명.
+7) 숫자/퍼센트/약물명은 사실적으로 표현.
+8) 최종 문장은 반드시 다음 문구로 끝내라:
    "이 설명은 학술제 목적의 예시이며, 실제 진단 및 처방을 대체하지 않습니다."
 """
 
     instructions = """
 [작성 지침]
-1. AI 예측 결과가 의미하는 임상 상태를 설명하라. (예: 경도 단계, 초기 인지 저하 등)
-2. 환자의 기저질환과 약물 권장/주의/피함 사이의 연관성을 구체적으로 서술하라.
-3. 권장 약물의 작용기전, 주요 효과, 대표 부작용을 명시하라.
-4. ‘주의’ 약물은 왜 주의가 필요한지, ‘피함’ 약물은 어떤 이유로 피해야 하는지를 설명하라.
-5. 일상적 조언(식습관, 복약 관리 등)을 1~2문장으로 덧붙여라.
-6. 임신 관련 항목이 있으면 해당 부분을 따로 언급하라.
-7. 글의 길이·톤은 위의 규칙을 엄격히 따른다.
+1. 단계(예: 매우 경도/경도/중등도/정상)의 임상적 의미를 쉬운 말로 요약.
+2. 약물(권장/주의/피함)과 기저질환 사이의 연관성을 구체적으로 연결.
+3. 권장 약물의 작용기전·효과·대표 부작용을 간단히.
+4. ‘주의’/‘피함’ 사유를 근거 위주로 간명하게.
+5. 생활 조언(복약/활동/모니터링)을 1~2문장 포함.
+6. 임신 관련 항목이 있으면 별도로 언급.
+7. 과도한 의료 주장/진단 단정 표현은 피하고, 안내/권고 톤 유지.
 """
 
     task = f"""
-위 [참고데이터]를 바탕으로, {tone_guides.get(tone)}  
-{length_guides.get(length)}  
-{('' if not preg_block else preg_block)}  
-!!! [참고데이터]를 그대로 복사하지 말고 자연스러운 설명문으로 재구성하라.
+위 [참고데이터]를 바탕으로 {name}님에게 설명을 작성하라.
+{('' if not preg_block else preg_block)}
+!!! [참고데이터]를 그대로 복사하지 말고, 자연스럽고 읽기 쉬운 문장으로 재구성하라.
 """
 
     return f"{context}\n{hard_rules}\n{instructions}\n{task}"
+
 
 # ===================== LLM: ChatGPT 호출 =====================
 def generate_llm_explanation(client, info, res, plan, tone="Kind", length="Normal", language="한국어"):
