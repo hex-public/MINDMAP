@@ -4,7 +4,7 @@ pandas==2.3.3
 numpy==1.26.4
 pillow==10.4.0
 matplotlib==3.8.4
-rich==14.2.0
+rich==13.7.1
 
 # torch (CPU)
 torch==2.3.1
