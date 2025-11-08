@@ -172,26 +172,32 @@ def page_info():
     app_header()
     st.title("인적사항 입력")
 
+    # 성별 먼저 선택 → 변경 시 즉시 rerun
+    gender = st.radio("성별 *", ["남자", "여자"], horizontal=True, key="pf_gender")
+
     with st.form("patient_form", clear_on_submit=False):
-        name = st.text_input("이름 *")
-        age = st.number_input("나이 *", min_value=1, max_value=120, step=1)
-        gender = st.radio("성별 *", ["남자", "여자"], horizontal=True)
+        name = st.text_input("이름 *", key="pf_name")
+        age = st.number_input("나이 *", min_value=1, max_value=120, step=1, key="pf_age")
 
         st.subheader("기저질환 선택")
         disease_list = ["고혈압", "당뇨", "심장질환", "간질환(간경화 등)"]
-        if gender == "여자":
+        if st.session_state.get("pf_gender") == "여자":
             disease_list.append("임신(임산부)")
-        diseases = st.multiselect("해당되는 항목을 모두 선택하세요.", disease_list)
+        diseases = st.multiselect("해당되는 항목을 모두 선택하세요.", disease_list, key="pf_diseases")
 
         submitted = st.form_submit_button("Next")
+
     if submitted:
-        master_key = name.strip().lower() == "admin"
-        if not master_key and (not name or not age or not gender):
+        master_key = (st.session_state.get("pf_name","").strip().lower() == "admin")
+        if not master_key and (not st.session_state.get("pf_name") or not st.session_state.get("pf_age") or not st.session_state.get("pf_gender")):
             st.warning("⚠️ 필수 항목(이름/나이/성별)을 모두 입력해주세요.")
             return
 
         st.session_state.patient_info = {
-            "이름": name, "나이": age, "성별": gender, "기저질환": diseases,
+            "이름": st.session_state.get("pf_name"),
+            "나이": st.session_state.get("pf_age"),
+            "성별": st.session_state.get("pf_gender"),
+            "기저질환": st.session_state.get("pf_diseases", []),
         }
         st.session_state.page = "upload"
         st.toast("다음 단계로 이동합니다.", icon="➡️")
@@ -214,7 +220,7 @@ def page_upload():
             if not img_bytes:
                 raise ValueError("업로드된 파일이 비어 있습니다.")
             img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-            st.image(img, caption="업로드된 MRI 이미지", use_column_width=True)
+            st.image(img, caption="업로드된 MRI 이미지", use_container_width=True)
 
             if st.button("AI 분석하기"):
                 st.session_state.image_bytes = img_bytes
@@ -487,9 +493,9 @@ def page_result():
 
                 c1, c2 = st.columns(2)
                 with c1:
-                    st.image(orig_img, caption="원본 이미지", use_column_width=True)
+                    st.image(orig_img, caption="원본 이미지", use_container_width=True)
                 with c2:
-                    st.image(overlay_pil, caption="Grad-CAM", use_column_width=True)
+                    st.image(overlay_pil, caption="Grad-CAM", use_container_width=True)
 
         except Exception as e:
             st.warning(f"Grad-CAM 생성 중 문제가 발생했습니다.: {e}")
