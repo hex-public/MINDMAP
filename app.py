@@ -212,7 +212,7 @@ def page_upload():
             if not img_bytes:
                 raise ValueError("업로드된 파일이 비어 있습니다.")
             img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-            st.image(img, caption="업로드된 MRI 이미지", use_container_width=True)
+            st.image(img, caption="업로드된 MRI 이미지", use_column_width=True)
 
             if st.button("AI 분석하기"):
                 st.session_state.image_bytes = img_bytes
@@ -485,9 +485,9 @@ def page_result():
 
                 c1, c2 = st.columns(2)
                 with c1:
-                    st.image(orig_img, caption="원본 이미지", use_container_width=True)
+                    st.image(orig_img, caption="원본 이미지", use_column_width=True)
                 with c2:
-                    st.image(overlay_pil, caption="Grad-CAM", use_container_width=True)
+                    st.image(overlay_pil, caption="Grad-CAM", use_column_width=True)
 
         except Exception as e:
             st.warning(f"Grad-CAM 생성 중 문제가 발생했습니다.: {e}")
