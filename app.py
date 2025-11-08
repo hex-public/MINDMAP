@@ -168,39 +168,13 @@ with st.sidebar:
         st.caption("관리자 전용 기능입니다.")
 
 # ===================== 페이지: 환자 정보 =====================
-def page_upload():
+def page_info():
     app_header()
-    st.title("MRI 이미지 업로드")
-    st.write("환자 정보를 바탕으로 MRI 이미지를 분석합니다.")
-    st.info("[ jpg / jpeg / png ] 형식만 지원합니다.")
-
-    uploaded_file = st.file_uploader("Image type", type=["jpg", "jpeg", "png"])
-
-    if uploaded_file is not None:
-        try:
-            # UploadedFile → bytes
-            img_bytes = uploaded_file.read()
-            if not img_bytes:
-                raise ValueError("업로드된 파일이 비어 있습니다.")
-
-            # bytes → PIL(RGB) (포인터/포맷 문제 방지)
-            img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-
-            st.image(img, caption="업로드된 MRI 이미지", use_container_width=True)
-
-            # 분석 버튼
-            if st.button("AI 분석하기"):
-                # 다음 페이지에서 다시 열 수 있게 bytes도 저장
-                st.session_state.image_bytes = img_bytes
-                st.session_state.image = img  # 바로 PIL 사용시
-                st.session_state.page = "analysis"
-                st.rerun()
-        except Exception as e:
-            st.error(f"이미지 처리 중 오류: {e}")
-    else:
-        st.warning("⚠️ MRI 이미지를 업로드해주세요.")
-
-    st.button("뒤로가기", on_click=lambda: st.session_state.update(page="info"))
+    st.title("환자 정보")
+    st.write("분석을 시작하려면 MRI 이미지를 업로드해주세요.")
+    if st.button("MRI 업로드로 이동"):
+        st.session_state.page = "upload"
+        st.rerun()
     app_footer()
 
 # ===================== 페이지: 업로드 =====================
@@ -211,19 +185,27 @@ def page_upload():
     st.info("[ jpg / jpeg / png ] 형식만 지원합니다.")
 
     uploaded_file = st.file_uploader("Image type", type=["jpg", "jpeg", "png"])
-    if uploaded_file:
-        img = Image.open(uploaded_file)
-        st.image(img, caption="업로드된 MRI 이미지", use_container_width=True)
-        if st.button("AI 분석하기"):
-            st.session_state.image = img
-            st.session_state.page = "analysis"
-            st.rerun()
+
+    if uploaded_file is not None:
+        try:
+            img_bytes = uploaded_file.read()
+            if not img_bytes:
+                raise ValueError("업로드된 파일이 비어 있습니다.")
+            img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+            st.image(img, caption="업로드된 MRI 이미지", use_container_width=True)
+
+            if st.button("AI 분석하기"):
+                st.session_state.image_bytes = img_bytes
+                st.session_state.image = img
+                st.session_state.page = "analysis"
+                st.rerun()
+        except Exception as e:
+            st.error(f"이미지 처리 중 오류: {e}")
     else:
         st.warning("⚠️ MRI 이미지를 업로드해주세요.")
 
     st.button("뒤로가기", on_click=lambda: st.session_state.update(page="info"))
     app_footer()
-
 
 # ===================== 페이지: 분석 중 =====================
 def page_analysis():
